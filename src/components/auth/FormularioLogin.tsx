@@ -2,6 +2,7 @@
 
 import { useRef, useState, type FormEvent } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { obtenerClienteSupabase } from '@/lib/supabase/client';
 import { ejecutarLogin, type DatosLogin, type ErroresLogin } from '@/lib/auth/contrato';
 import ReenvioConfirmacion from './ReenvioConfirmacion';
@@ -9,6 +10,7 @@ import ReenvioConfirmacion from './ReenvioConfirmacion';
 type EstadoLogin = 'inicial' | 'enviando' | 'sesion_iniciada' | 'error';
 
 export default function FormularioLogin() {
+  const router = useRouter();
   const [datos, setDatos] = useState<DatosLogin>({ email: '', password: '' });
   const [errores, setErrores] = useState<ErroresLogin>({});
   const [estado, setEstado] = useState<EstadoLogin>('inicial');
@@ -46,6 +48,8 @@ export default function FormularioLogin() {
       case 'sesion_iniciada':
         setErrores({});
         setEstado('sesion_iniciada');
+        // "/" es la ruta protegida minima: un login exitoso redirige ahi.
+        router.replace('/');
         return;
       case 'error':
         setMensajeError(resultado.mensaje);

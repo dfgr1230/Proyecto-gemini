@@ -33,6 +33,10 @@ import {
   construirCargaResend,
   clasificarErrorReenvio,
   ejecutarReenvio,
+  clasificarErrorLogout,
+  ejecutarLogout,
+  interpretarSesionProtegida,
+  verificarSesionProtegida,
 } from './contrato.ts';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
@@ -244,13 +248,30 @@ test('login: credenciales validas llaman signInWithPassword una vez con email y 
       signInWithPassword: async (credenciales) => {
         vecesLlamado += 1;
         credencialesRecibidas = credenciales;
-        return { data: { user: { id: 'x' } }, error: null };
+        // El doble incluye "session" porque ejecutarLogin ahora exige
+        // evidencia positiva de sesion, igual que ejecutarRegistro exige
+        // data.user. Una respuesta real de signInWithPassword sin error
+        // siempre trae sesion; este doble refleja ese contrato.
+        return { data: { user: { id: 'x' }, session: { access_token: 'token-ficticio' } }, error: null };
       },
     }
   );
   assert.equal(vecesLlamado, 1);
   assert.deepEqual(Object.keys(credencialesRecibidas).sort(), ['email', 'password']);
   assert.equal(resultado.estado, 'sesion_iniciada');
+});
+
+test('login: sin error pero sin sesion -> NO se declara sesion_iniciada, se devuelve error sanitizado', async () => {
+  const resultado = await ejecutarLogin(
+    { email: 'usuario-temporal@example.invalid', password: 'contrasena-ficticia-123' },
+    { signInWithPassword: async () => ({ data: { session: null }, error: null }) }
+  );
+  assert.notEqual(resultado.estado, 'sesion_iniciada', 'la ausencia de error no basta: sin sesion no hay login');
+  assert.equal(resultado.estado, 'error');
+  assert.ok(resultado.mensaje.length > 0, 'debe entregarse un mensaje utilizable al usuario');
+  // El mensaje mostrado es fijo y redactado en contrato.ts: no puede
+  // proceder del proveedor (aqui no hubo error del proveedor en absoluto).
+  assert.equal(resultado.mensaje, 'No fue posible confirmar el inicio de sesión. Intenta de nuevo.');
 });
 
 test('login: credenciales invalidas se sanitizan (mensaje fijo, sin detalle interno)', () => {
@@ -493,10 +514,74 @@ test('ConfirmacionCorreo.tsx muestra un estado de carga perceptible ("Confirmand
 });
 
 // --- 8: proteccion contra doble procesamiento en Strict Mode ---
-test('ConfirmacionCorreo.tsx protege contra doble procesamiento (guardia useRef + limpieza del efecto)', () => {
+//
+// NOTA DE HONESTIDAD: las cuatro pruebas siguientes son ESTRUCTURALES.
+// Leen el texto fuente de ConfirmacionCorreo.tsx y comprueban la forma
+// del codigo. NO ejecutan React, NO montan el componente y NO
+// reproducen el ciclo real de Strict Mode (montaje -> limpieza ->
+// nuevo montaje). No hay jsdom ni React Testing Library en este
+// proyecto.
+function cuerpoEfectoConfirmacion() {
   const contenido = readFileSync(path.join(RAIZ, 'src/components/auth/ConfirmacionCorreo.tsx'), 'utf8');
-  assert.ok(contenido.includes('yaIniciado.current'), 'debe existir una guardia contra doble ejecucion del efecto');
-  assert.ok(contenido.includes('cancelado = true'), 'debe existir limpieza que ignore resultados tardios');
+  const inicio = contenido.indexOf('useEffect(() => {');
+  const fin = contenido.indexOf('}, []);');
+  assert.ok(inicio > -1 && fin > inicio, 'debe existir el efecto de confirmacion delimitado por "useEffect(() => {" y "}, []);"');
+  return { contenido, cuerpo: contenido.slice(inicio, fin) };
+}
+
+test('ConfirmacionCorreo.tsx: ya no existe la guardia "yaIniciado" que bloqueaba la segunda ejecucion del efecto en Strict Mode (verificacion ESTRUCTURAL, no ejecuta React)', () => {
+  const { contenido, cuerpo } = cuerpoEfectoConfirmacion();
+  assert.ok(!contenido.includes('yaIniciado'), 'la guardia defectuosa de "ya se inicio una vez" no debe existir');
+  const indiceCancelado = cuerpo.indexOf('let cancelado = false;');
+  assert.ok(indiceCancelado > -1, 'el efecto debe declarar su propia variable "cancelado"');
+  const returnTemprano = cuerpo.slice(0, indiceCancelado).indexOf('return;');
+  assert.equal(returnTemprano, -1, 'no debe haber ningun "return" temprano antes de declarar "cancelado": impediria adjuntar el manejador de la ejecucion vigente');
+});
+
+test('ConfirmacionCorreo.tsx: la operacion de confirmacion se crea una sola vez mediante una promesa reutilizable en useRef (verificacion ESTRUCTURAL, no ejecuta React)', () => {
+  const { contenido, cuerpo } = cuerpoEfectoConfirmacion();
+  assert.ok(
+    /const promesaConfirmacion = useRef<Promise<[^>]+> \| null>\(null\);/.test(contenido),
+    'el ref debe guardar la promesa de confirmacion, no una bandera booleana',
+  );
+  assert.ok(
+    cuerpo.includes('if (!promesaConfirmacion.current) {'),
+    'la promesa solo debe crearse cuando el ref todavia esta vacio',
+  );
+  assert.ok(
+    cuerpo.includes('promesaConfirmacion.current = ejecutarConfirmacion({'),
+    'ejecutarConfirmacion debe invocarse dentro de esa guardia, de modo que solo la primera ejecucion la inicie',
+  );
+  const llamadas = cuerpo.match(/ejecutarConfirmacion\(/g) ?? [];
+  assert.equal(llamadas.length, 1, 'ejecutarConfirmacion debe invocarse en un unico punto del efecto');
+});
+
+test('ConfirmacionCorreo.tsx: cada ejecucion del efecto adjunta su propio manejador con cancelacion local (verificacion ESTRUCTURAL, no ejecuta React)', () => {
+  const { cuerpo } = cuerpoEfectoConfirmacion();
+  const indiceCancelado = cuerpo.indexOf('let cancelado = false;');
+  const indiceCreacion = cuerpo.indexOf('if (!promesaConfirmacion.current) {');
+  const indiceThen = cuerpo.indexOf('promesaConfirmacion.current.then((resultado) => {');
+  assert.ok(indiceThen > -1, 'el manejador debe adjuntarse a la promesa guardada en el ref');
+  assert.ok(indiceCancelado < indiceCreacion, '"cancelado" debe declararse antes de la creacion condicional de la promesa');
+  assert.ok(indiceCreacion < indiceThen, 'el .then debe estar FUERA de la guardia de creacion, para que tambien la segunda ejecucion adjunte manejador');
+  assert.ok(cuerpo.includes('cancelado = true;'), 'la limpieza debe marcar cancelado en el closure de su propia ejecucion');
+  const indiceLimpieza = cuerpo.indexOf('return () => {');
+  assert.ok(indiceLimpieza > indiceThen, 'la limpieza debe devolverse despues de adjuntar el manejador');
+});
+
+test('ConfirmacionCorreo.tsx: el manejador comprueba "cancelado" antes de actualizar estado (verificacion ESTRUCTURAL, no ejecuta React)', () => {
+  const { cuerpo } = cuerpoEfectoConfirmacion();
+  const indiceThen = cuerpo.indexOf('promesaConfirmacion.current.then((resultado) => {');
+  const cuerpoManejador = cuerpo.slice(indiceThen);
+  const indiceGuardia = cuerpoManejador.indexOf('if (cancelado) return;');
+  const indicePrimerSet = Math.min(
+    ...['setEstado(', 'setMensajeError(']
+      .map((nombre) => cuerpoManejador.indexOf(nombre))
+      .filter((indice) => indice > -1),
+  );
+  assert.ok(indiceGuardia > -1, 'el manejador debe comprobar "cancelado"');
+  assert.ok(indicePrimerSet > -1, 'el manejador debe actualizar estado');
+  assert.ok(indiceGuardia < indicePrimerSet, 'la comprobacion de "cancelado" debe preceder a cualquier actualizacion de estado');
 });
 
 // --- 15/24: navegacion a /login disponible en todos los estados finales, pagina utilizable tras error ---
@@ -718,4 +803,210 @@ test('/login y /registro siguen disponibles como rutas separadas tras agregar el
     readFileSync(path.join(RAIZ, 'src/app/registro/page.tsx'), 'utf8').includes('FormularioRegistro'),
     'la pagina de registro debe seguir usando FormularioRegistro'
   );
+});
+
+// ============================================================
+// ejecutarLogout: cierre de sesion (Checkpoint 6A, remediacion).
+// ============================================================
+
+test('ejecutarLogout: signOut exitoso -> sesion_cerrada', async () => {
+  const resultado = await ejecutarLogout({
+    signOut: async () => ({ error: null }),
+  });
+  assert.equal(resultado.estado, 'sesion_cerrada');
+});
+
+test('ejecutarLogout: signOut devuelve un error -> error, con mensaje utilizable, sin fingir cierre', async () => {
+  const resultado = await ejecutarLogout({
+    signOut: async () => ({ error: { message: 'unexpected failure', status: 500 } }),
+  });
+  assert.equal(resultado.estado, 'error');
+  assert.ok(resultado.mensaje.length > 0);
+});
+
+test('ejecutarLogout: un error de red se clasifica como tal (mismo criterio que login/registro)', () => {
+  const clasificado = clasificarErrorLogout({ name: 'AuthRetryableFetchError', message: 'fetch failed', status: 0 });
+  assert.equal(clasificado.categoria, 'red');
+});
+
+test('ejecutarLogout: nunca expone el mensaje interno crudo de Supabase', () => {
+  const secretoFicticio = 'DETALLE-INTERNO-QUE-NUNCA-DEBE-VERSE-EN-PANTALLA';
+  const clasificado = clasificarErrorLogout({ message: secretoFicticio, status: 500 });
+  assert.ok(!clasificado.mensaje.includes(secretoFicticio));
+});
+
+test('ejecutarLogout: una excepcion inesperada tambien produce un resultado utilizable, no una excepcion sin controlar', async () => {
+  const resultado = await ejecutarLogout({
+    signOut: async () => {
+      throw { name: 'AuthRetryableFetchError', message: 'fetch failed', status: 0 };
+    },
+  });
+  assert.equal(resultado.estado, 'error');
+});
+
+// ============================================================
+// verificarSesionProtegida / interpretarSesionProtegida: la ruta "/"
+// minima (Checkpoint 6A, remediacion).
+// ============================================================
+
+test('interpretarSesionProtegida: sesion presente (objeto no nulo) -> autenticado', () => {
+  assert.equal(interpretarSesionProtegida({ user: { id: 'usuario-ficticio' } }), 'autenticado');
+});
+
+test('interpretarSesionProtegida: sesion ausente (null) -> sin_sesion', () => {
+  assert.equal(interpretarSesionProtegida(null), 'sin_sesion');
+});
+
+test('interpretarSesionProtegida: sesion ausente (undefined) -> sin_sesion', () => {
+  assert.equal(interpretarSesionProtegida(undefined), 'sin_sesion');
+});
+
+test('verificarSesionProtegida: sin sesion -> sin_sesion (dependencia inyectada, sin red)', async () => {
+  const resultado = await verificarSesionProtegida({
+    getSession: async () => ({ data: { session: null } }),
+  });
+  assert.equal(resultado, 'sin_sesion');
+});
+
+test('verificarSesionProtegida: con sesion -> autenticado (dependencia inyectada, sin red)', async () => {
+  const resultado = await verificarSesionProtegida({
+    getSession: async () => ({ data: { session: { user: { id: 'usuario-ficticio' } } } }),
+  });
+  assert.equal(resultado, 'autenticado');
+});
+
+// ============================================================
+// VistaProtegida.tsx: verificacion estructural del componente de UI
+// (sin entorno DOM disponible, igual que el resto de la suite).
+// ============================================================
+
+const RUTA_VISTA_PROTEGIDA = 'src/components/auth/VistaProtegida.tsx';
+
+test('VistaProtegida.tsx verifica la sesion con verificarSesionProtegida antes de mostrar contenido', () => {
+  const contenido = readFileSync(path.join(RAIZ, RUTA_VISTA_PROTEGIDA), 'utf8');
+  assert.ok(contenido.includes('verificarSesionProtegida'));
+  assert.ok(contenido.includes('supabase.auth.getSession'));
+});
+
+test('VistaProtegida.tsx redirige a /login con replace cuando no hay sesion', () => {
+  const contenido = readFileSync(path.join(RAIZ, RUTA_VISTA_PROTEGIDA), 'utf8');
+  assert.ok(contenido.includes("resultado === 'sin_sesion'"));
+  assert.ok(contenido.includes("router.replace('/login')"));
+});
+
+test('VistaProtegida.tsx muestra un estado neutral mientras se resuelve la sesion', () => {
+  const contenido = readFileSync(path.join(RAIZ, RUTA_VISTA_PROTEGIDA), 'utf8');
+  assert.ok(contenido.includes("estado === 'cargando'"));
+});
+
+test('VistaProtegida.tsx llama a supabase.auth.signOut() a traves de ejecutarLogout', () => {
+  const contenido = readFileSync(path.join(RAIZ, RUTA_VISTA_PROTEGIDA), 'utf8');
+  assert.ok(contenido.includes('ejecutarLogout'));
+  assert.ok(contenido.includes('supabase.auth.signOut'));
+});
+
+test('VistaProtegida.tsx: logout exitoso redirige a /login con replace', () => {
+  const contenido = readFileSync(path.join(RAIZ, RUTA_VISTA_PROTEGIDA), 'utf8');
+  const bloqueLogout = contenido.slice(contenido.indexOf('async function manejarLogout'));
+  assert.ok(bloqueLogout.includes("router.replace('/login')"));
+});
+
+test('VistaProtegida.tsx: logout fallido muestra un mensaje visible y no navega (no finge el cierre)', () => {
+  const contenido = readFileSync(path.join(RAIZ, RUTA_VISTA_PROTEGIDA), 'utf8');
+  const bloqueLogout = contenido.slice(
+    contenido.indexOf('async function manejarLogout'),
+    contenido.indexOf('async function manejarLogout') + contenido.slice(contenido.indexOf('async function manejarLogout')).indexOf('\n}')
+  );
+  assert.ok(bloqueLogout.includes("resultado.estado === 'error'"));
+  assert.ok(bloqueLogout.includes('setMensajeErrorLogout(resultado.mensaje)'));
+  // La rama de error debe terminar en "return" antes de llegar al replace() de exito.
+  const indiceRamaError = bloqueLogout.indexOf("resultado.estado === 'error'");
+  const indiceReplaceExito = bloqueLogout.indexOf("router.replace('/login')");
+  assert.ok(indiceRamaError < indiceReplaceExito, 'la rama de error debe aparecer antes del replace() de exito');
+});
+
+test('VistaProtegida.tsx protege contra doble clic en "Cerrar sesión" (guardia + disabled ligado a "cerrando")', () => {
+  const contenido = readFileSync(path.join(RAIZ, RUTA_VISTA_PROTEGIDA), 'utf8');
+  assert.ok(contenido.includes("if (estadoLogout === 'cerrando') return;"));
+  assert.ok(contenido.includes("disabled={estadoLogout === 'cerrando'}"));
+});
+
+test('VistaProtegida.tsx no imprime tokens, sesiones ni la respuesta cruda del SDK en consola', () => {
+  const contenido = readFileSync(path.join(RAIZ, RUTA_VISTA_PROTEGIDA), 'utf8');
+  assert.ok(!/console\.(log|error|warn|info|debug)/.test(contenido));
+});
+
+test('VistaProtegida.tsx: el boton de cerrar sesion es un <button> nativo (accesible por teclado)', () => {
+  const contenido = readFileSync(path.join(RAIZ, RUTA_VISTA_PROTEGIDA), 'utf8');
+  assert.ok(contenido.includes('<button'));
+  assert.ok(contenido.includes('Cerrar sesión'));
+});
+
+// ============================================================
+// Correccion Strict Mode (regresion): la guardia "yaVerificado" dejaba
+// la vista atascada en "Cargando..." para siempre, porque la segunda
+// ejecucion del efecto (montaje -> limpieza -> nuevo montaje, propio
+// de Strict Mode) se saltaba por completo mientras que la primera ya
+// habia sido cancelada por su propia limpieza antes de resolver.
+//
+// IMPORTANTE (honestidad de las pruebas, sin entorno DOM disponible):
+// estas pruebas son ESTRUCTURALES -- leen el archivo fuente como texto
+// y verifican patrones. NINGUNA de ellas ejecuta React, monta el
+// componente ni reproduce el ciclo montaje/limpieza/remontaje real de
+// Strict Mode; solo dejan constancia de que el patron defectuoso ya no
+// esta presente y de que el patron correcto (cancelado local por
+// ejecucion, sin guardia externa) si lo esta.
+// ============================================================
+
+test('VistaProtegida.tsx: ya no existe la guardia "yaVerificado" que bloqueaba la segunda ejecucion del efecto en Strict Mode (verificacion ESTRUCTURAL, no ejecuta React)', () => {
+  const contenido = readFileSync(path.join(RAIZ, RUTA_VISTA_PROTEGIDA), 'utf8');
+  assert.ok(!contenido.includes('yaVerificado'), 'la guardia defectuosa de "ya se ejecuto una vez" no debe existir');
+  // Se revisa especificamente la LINEA de import de 'react' (no el texto
+  // completo del archivo): un comentario que EXPLIQUE por que se quito
+  // useRef puede mencionar la palabra "useRef" en prosa sin que eso
+  // signifique que el import sigue presente.
+  const lineaImportReact = contenido
+    .split('\n')
+    .find((linea) => linea.trim().startsWith('import') && linea.includes("from 'react'"));
+  assert.ok(lineaImportReact, 'debe existir el import de React');
+  assert.ok(!lineaImportReact.includes('useRef'), 'useRef ya no se usa en este componente tras quitar la guardia -- el import debe haberse retirado, no dejarse sin uso');
+});
+
+test('VistaProtegida.tsx: el efecto de verificacion de sesion ya no tiene un "return" temprano antes de declarar su propio "cancelado" (verificacion ESTRUCTURAL, no ejecuta React)', () => {
+  const contenido = readFileSync(path.join(RAIZ, RUTA_VISTA_PROTEGIDA), 'utf8');
+  const inicioEfecto = contenido.indexOf('useEffect(() => {');
+  const finEfecto = contenido.indexOf('}, [router]);');
+  assert.ok(inicioEfecto > -1 && finEfecto > inicioEfecto, 'debe existir un unico efecto de verificacion de sesion con dependencia [router]');
+  const cuerpoEfecto = contenido.slice(inicioEfecto, finEfecto);
+  const indiceCancelado = cuerpoEfecto.indexOf('let cancelado = false;');
+  assert.ok(indiceCancelado > -1, 'cada ejecucion del efecto debe declarar su propia variable local "cancelado"');
+  const primerReturnTemprano = cuerpoEfecto.slice(0, indiceCancelado).indexOf('return;');
+  assert.equal(primerReturnTemprano, -1, 'no debe haber ningun "return;" antes de declarar "cancelado" para esta ejecucion del efecto');
+});
+
+test('VistaProtegida.tsx: la limpieza del efecto sigue marcando "cancelado" por closure propio, y el manejador de la promesa sigue comprobandolo antes de actualizar estado (verificacion ESTRUCTURAL, no ejecuta React)', () => {
+  const contenido = readFileSync(path.join(RAIZ, RUTA_VISTA_PROTEGIDA), 'utf8');
+  const inicioEfecto = contenido.indexOf('useEffect(() => {');
+  const finEfecto = contenido.indexOf('}, [router]);');
+  const cuerpoEfecto = contenido.slice(inicioEfecto, finEfecto);
+  assert.ok(cuerpoEfecto.includes('if (cancelado) return;'), 'el manejador de la promesa debe seguir comprobando su propia bandera "cancelado" antes de actualizar estado o navegar (componente desmontado -> ninguna actualizacion posterior)');
+  assert.ok(cuerpoEfecto.includes('cancelado = true;'), 'la funcion de limpieza devuelta por el efecto debe seguir marcando "cancelado" para esa ejecucion especifica');
+});
+
+// ============================================================
+// "/" como ruta protegida minima, y redireccion tras login exitoso
+// (Checkpoint 6A, remediacion).
+// ============================================================
+
+test('src/app/page.tsx ("/" ) renderiza VistaProtegida en vez del scaffold de create-next-app', () => {
+  const contenido = readFileSync(path.join(RAIZ, 'src/app/page.tsx'), 'utf8');
+  assert.ok(contenido.includes("import VistaProtegida from '@/components/auth/VistaProtegida'"));
+  assert.ok(contenido.includes('<VistaProtegida'));
+});
+
+test('FormularioLogin.tsx redirige a "/" con replace tras un login exitoso', () => {
+  const contenido = readFileSync(path.join(RAIZ, 'src/components/auth/FormularioLogin.tsx'), 'utf8');
+  assert.ok(contenido.includes("import { useRouter } from 'next/navigation'"));
+  const bloqueExito = contenido.slice(contenido.indexOf("case 'sesion_iniciada':"), contenido.indexOf("case 'error':"));
+  assert.ok(bloqueExito.includes("router.replace('/')"));
 });

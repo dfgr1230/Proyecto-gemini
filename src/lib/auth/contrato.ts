@@ -277,7 +277,7 @@ export async function ejecutarRegistro(
 }
 
 interface RespuestaSignIn {
-  data: unknown;
+  data: { session: unknown } | null;
   error: unknown;
 }
 
@@ -300,7 +300,7 @@ export async function ejecutarLogin(
   }
 
   try {
-    const { error } = await dependencias.signInWithPassword({
+    const { data, error } = await dependencias.signInWithPassword({
       email: datos.email.trim(),
       password: datos.password,
     });
@@ -308,10 +308,79 @@ export async function ejecutarLogin(
     if (error) {
       return { estado: 'error', mensaje: clasificarErrorLogin(error).mensaje };
     }
+    // Mismo principio defensivo que ejecutarRegistro (que exige data.user):
+    // la ausencia de error NO es evidencia de que la sesion exista. Sin una
+    // sesion real, afirmar 'sesion_iniciada' llevaria a FormularioLogin a
+    // navegar a "/", donde VistaProtegida no encontraria sesion y devolveria
+    // al usuario a /login sin ningun mensaje -- el boton pareceria "no hacer
+    // nada". Se exige evidencia positiva y, si falta, se informa un error
+    // sanitizado.
+    if (!data?.session) {
+      return { estado: 'error', mensaje: 'No fue posible confirmar el inicio de sesión. Intenta de nuevo.' };
+    }
     return { estado: 'sesion_iniciada' };
   } catch (error) {
     return { estado: 'error', mensaje: clasificarErrorLogin(error).mensaje };
   }
+}
+
+// ----------------------------------------------------------------
+// Cierre de sesion (logout) y verificacion de sesion para la ruta
+// protegida minima ("/"). Mismo patron de las funciones anteriores:
+// dependencias inyectadas, sin tocar Supabase ni el DOM directamente,
+// para poder probarse con dobles locales.
+// ----------------------------------------------------------------
+
+export interface DependenciasLogout {
+  signOut: () => Promise<{ error: unknown }>;
+}
+
+export type ResultadoLogout = { estado: 'sesion_cerrada' } | { estado: 'error'; mensaje: string };
+
+// Reutiliza clasificarErrorLogin (misma logica de "error de red" vs
+// "cualquier otro error"): un logout no tiene categorias propias mas
+// especificas que distinguir (no hay credenciales invalidas ni correo
+// sin confirmar en un signOut), asi que el mensaje generico de
+// "desconocido" es exactamente el mismo que ya usa esa funcion.
+export function clasificarErrorLogout(error: unknown): ErrorAuthClasificado {
+  const e = comoFormaErrorAuth(error);
+  if (esErrorDeRed(e)) {
+    return { categoria: 'red', mensaje: 'No fue posible conectar con el servidor. Revisa tu conexión e intenta de nuevo.' };
+  }
+  return { categoria: 'desconocido', mensaje: 'No fue posible cerrar la sesión. Intenta de nuevo.' };
+}
+
+export async function ejecutarLogout(dependencias: DependenciasLogout): Promise<ResultadoLogout> {
+  try {
+    const { error } = await dependencias.signOut();
+    if (error) {
+      return { estado: 'error', mensaje: clasificarErrorLogout(error).mensaje };
+    }
+    return { estado: 'sesion_cerrada' };
+  } catch (error) {
+    return { estado: 'error', mensaje: clasificarErrorLogout(error).mensaje };
+  }
+}
+
+// Verificacion de sesion para la ruta protegida minima. "session"
+// llega tipado como unknown (viene tal cual de
+// supabase.auth.getSession()) -- la unica pregunta relevante aqui es
+// si existe o no, nunca se inspecciona su contenido.
+export type ResultadoSesionProtegida = 'sin_sesion' | 'autenticado';
+
+export function interpretarSesionProtegida(session: unknown): ResultadoSesionProtegida {
+  return session ? 'autenticado' : 'sin_sesion';
+}
+
+export interface DependenciasSesionProtegida {
+  getSession: () => Promise<{ data: { session: unknown } }>;
+}
+
+export async function verificarSesionProtegida(
+  dependencias: DependenciasSesionProtegida
+): Promise<ResultadoSesionProtegida> {
+  const { data } = await dependencias.getSession();
+  return interpretarSesionProtegida(data.session);
 }
 
 // ----------------------------------------------------------------

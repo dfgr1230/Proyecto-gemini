@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { obtenerClienteSupabase } from '@/lib/supabase/client';
-import { ejecutarConfirmacion } from '@/lib/auth/contrato';
+import { ejecutarConfirmacion, type ResultadoConfirmacion } from '@/lib/auth/contrato';
 
 type EstadoConfirmacion = 'cargando' | 'confirmado' | 'enlace_invalido' | 'error';
 
@@ -11,23 +11,34 @@ export default function ConfirmacionCorreo() {
   const [estado, setEstado] = useState<EstadoConfirmacion>('cargando');
   const [mensajeError, setMensajeError] = useState<string | null>(null);
 
-  // Evita procesar dos veces bajo React Strict Mode (que invoca los
-  // efectos dos veces en desarrollo). El propio SDK ya es idempotente
-  // (initialize() cachea su resultado), pero esta guardia evita ademas
-  // una segunda ejecucion innecesaria de este efecto.
-  const yaIniciado = useRef(false);
+  // Guarda la PROMESA de confirmacion, no una bandera de "ya se
+  // ejecuto". La diferencia importa bajo React Strict Mode, que en
+  // desarrollo hace montaje -> limpieza -> nuevo montaje: una bandera
+  // que impida entrar a la segunda ejecucion deja como unico manejador
+  // el de la primera, que su propia limpieza ya cancelo
+  // (cancelado = true) antes de que la promesa resolviera -- ninguna
+  // ejecucion aplicaria el resultado y la vista quedaria en
+  // "Confirmando tu correo..." para siempre.
+  //
+  // Con la promesa en el ref, la operacion logica de confirmacion se
+  // inicia UNA SOLA VEZ (solo la primera ejecucion la crea), pero CADA
+  // ejecucion del efecto adjunta su propio manejador con su propia
+  // variable "cancelado" local. La limpieza de una ejecucion solo
+  // cancela el manejador de esa ejecucion, nunca el de la vigente.
+  const promesaConfirmacion = useRef<Promise<ResultadoConfirmacion> | null>(null);
 
   useEffect(() => {
-    if (yaIniciado.current) return;
-    yaIniciado.current = true;
-
     let cancelado = false;
-    const supabase = obtenerClienteSupabase();
 
-    ejecutarConfirmacion({
-      initialize: () => supabase.auth.initialize(),
-      getSession: () => supabase.auth.getSession(),
-    }).then((resultado) => {
+    if (!promesaConfirmacion.current) {
+      const supabase = obtenerClienteSupabase();
+      promesaConfirmacion.current = ejecutarConfirmacion({
+        initialize: () => supabase.auth.initialize(),
+        getSession: () => supabase.auth.getSession(),
+      });
+    }
+
+    promesaConfirmacion.current.then((resultado) => {
       if (cancelado) return;
       if (resultado.estado === 'error') {
         setMensajeError(resultado.mensaje);

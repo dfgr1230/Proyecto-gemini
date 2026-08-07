@@ -9,7 +9,7 @@ Este archivo se actualiza al cierre de cada día de trabajo. Refleja el estado r
 | Día | Estado |
 |---|---|
 | **Día 1 — Cimientos** | ✅ 100% completado |
-| Día 2 — Datos y login | 🟨 En progreso — Checkpoints 2, 3 y 4 aprobados con evidencia real; Checkpoint 5 (intentos) INCONCLUSO tras dos ejecuciones reales (ver cierre de jornada 06-ago-2026); integración Next.js–Supabase implementada en el árbol de trabajo, pendiente de validación en ejecución; Checkpoint 6 y cierre del Día 2 no iniciados |
+| **Día 2 — Datos y login** | ✅ 100% completado — cerrado el 7 de agosto de 2026. Checkpoints 2, 3, 4 y 5 aprobados con evidencia real; Checkpoint 6 (6A local + 6B funcional remoto) APROBADO Y CERRADO. Ver la sección "Checkpoint 6" para el alcance validado y sus limitaciones |
 | Día 3 — Test de diagnóstico | ⬜ Pendiente |
 | Día 4 — Conectar la IA | ⬜ Pendiente |
 | Día 5 — Ciclo adaptativo | ⬜ Pendiente |
@@ -190,9 +190,11 @@ Se conserva como utilidad de diagnóstico reutilizable (igual criterio que con e
 
 ---
 
-## Cierre de jornada — 6 de agosto de 2026 — Checkpoint 4 (diagnósticos) y Checkpoint 5 (intentos, inconcluso)
+## Cierre de jornada — 6 de agosto de 2026 — Checkpoint 4 (diagnósticos) y Checkpoint 5 (intentos, inconcluso en esa fecha)
 
-**Estado: Checkpoint 4 aprobado. Checkpoint 5 permanece INCONCLUSO tras dos ejecuciones reales — no está aprobado ni reprobado.** No se declara completa la Fase 2 ni el Día 2. No se ha iniciado el Checkpoint 6 ni el Día 3.
+> ⚠️ **ESTADO HISTÓRICO SUPERADO.** Esta entrada refleja la situación tal como era el 6 de agosto de 2026 y se conserva íntegra como registro de trazabilidad. Lo que aquí se afirma sobre el Checkpoint 5 (INCONCLUSO, dos ejecuciones, cero llamadas, cero filas) **dejó de ser el estado vigente** el 7 de agosto de 2026. El estado final y autoritativo del Checkpoint 5 es **APROBADO**, y está registrado en la sección "Cierre del Checkpoint 5" más abajo. Ante cualquier discrepancia, prevalece esa sección posterior.
+
+**Estado en esa fecha: Checkpoint 4 aprobado. Checkpoint 5 permanecía INCONCLUSO tras dos ejecuciones reales — no estaba aprobado ni reprobado.** No se declaraba completa la Fase 2 ni el Día 2. No se había iniciado el Checkpoint 6 ni el Día 3.
 
 Nota de trazabilidad: esta entrada se registra el 6 de agosto de 2026, consolidando en este documento resultados de sesiones de trabajo previas cuya fecha, hora exacta y detalle punto por punto no quedaron registrados en este archivo al momento de ocurrir. Donde el detalle exacto no está disponible, se documenta únicamente el resultado confirmado, sin reconstruir circunstancias no respaldadas.
 
@@ -201,32 +203,247 @@ Nota de trazabilidad: esta entrada se registra el 6 de agosto de 2026, consolida
 - [x] Checkpoint 4 aprobado (puntos 4-6 de la batería funcional: diagnóstico válido, rechazo de diagnósticos inválidos, bloqueo de un segundo diagnóstico por usuario — alcance definido al cierre del Checkpoint 3).
 - [x] Existe un diagnóstico válido del Usuario Temporal A, que debe conservarse y no debe leerse, modificarse, duplicarse ni eliminarse en las fases siguientes.
 
-### Checkpoint 5 — registro de intentos (`registrar_intento()`), INCONCLUSO
+### Checkpoint 5 — registro de intentos (`registrar_intento()`), INCONCLUSO **al 6 de agosto de 2026**
+
+*(Registro histórico. Superado por el "Cierre del Checkpoint 5" del 7 de agosto de 2026 — ver más abajo. Las cifras de esta subsección describen únicamente las dos primeras de las cinco ejecuciones que finalmente se realizaron.)*
 
 Utilidad: `scripts/checkpoint5-intentos.mjs` (con lógica pura en `scripts/lib/checkpoint5-logica.mjs`, cubierta por 96 pruebas locales en `scripts/checkpoint5-intentos.test.mjs`, aprobadas sin red).
 
-- Ejecuciones reales realizadas: **exactamente dos**, ambas **INCONCLUSAS**.
+- Ejecuciones reales realizadas **hasta esa fecha**: **dos**, ambas **INCONCLUSAS**.
 - Primera ejecución: terminó inconclusa por rechazo del login inicial. La causa técnica exacta de ese primer rechazo no quedó demostrada con evidencia disponible.
 - Segunda ejecución: terminó inconclusa por rechazo del login inicial, con:
   - `status: 400`
   - `code: invalid_credentials`
   - mensaje: `Invalid login credentials`
 - En ambas ejecuciones, el fallo ocurrió durante la autenticación del Usuario Temporal A, **antes** de cualquier operación sobre `registrar_intento()` o `public.intentos`.
-- Llamadas reales a `registrar_intento()` en las dos ejecuciones: **cero**.
-- Filas creadas por el Checkpoint 5 en `public.intentos` en las dos ejecuciones: **cero**.
+- Llamadas reales a `registrar_intento()` **en esas dos ejecuciones**: **cero**.
+- Filas creadas por el Checkpoint 5 en `public.intentos` **en esas dos ejecuciones**: **cero**.
 - No se atribuye el rechazo de credenciales a ninguna causa específica (contraseña, error de tipeo, la cuenta, Supabase u otra causa): no hay evidencia que lo demuestre.
-- **Checkpoint 5 no está aprobado ni reprobado: permanece INCONCLUSO.**
-- No existe una tercera ejecución. No se ha autorizado ni realizado.
+- **Al 6 de agosto de 2026, el Checkpoint 5 no estaba aprobado ni reprobado: permanecía INCONCLUSO.** *(Superado: quedó APROBADO el 7 de agosto de 2026.)*
+- A esa fecha no existía una tercera ejecución. *(Superado: se realizaron tres ejecuciones adicionales — la tercera, la cuarta y la quinta — todas registradas en el "Cierre del Checkpoint 5".)*
 
 ### Integración Next.js–Supabase
 
 - [x] Implementada en el árbol de trabajo: cliente público (`src/lib/supabase/client.ts`), contrato de autenticación (`src/lib/auth/contrato.ts`, con pruebas propias), páginas y componentes de registro, login, confirmación de correo y reenvío de confirmación (`src/app/login/`, `src/app/registro/`, `src/app/auth/callback/`, `src/components/auth/`).
 - Esta integración **todavía no está validada en ejecución real** (no hay, en este documento, evidencia de una prueba de flujo completo desde la interfaz contra Supabase). No se declara funcional hasta que exista esa validación.
 
-### Siguiente pendiente
+### Siguiente pendiente **según se planificó el 6 de agosto de 2026**
 
-Un **diagnóstico de autenticación independiente y no mutante**, enfocado específicamente en el rechazo repetido de credenciales del Usuario Temporal A observado en las dos ejecuciones del Checkpoint 5. Este diagnóstico es un paso separado de una eventual tercera ejecución del Checkpoint 5 — no la sustituye ni la autoriza. El Checkpoint 6 y el Día 3 no comienzan hasta que el Checkpoint 5 quede aprobado.
+*(Registro histórico. El plan que sigue se ejecutó y quedó superado: ver "Cierre del Checkpoint 5".)*
+
+Un **diagnóstico de autenticación independiente y no mutante**, enfocado específicamente en el rechazo repetido de credenciales del Usuario Temporal A observado en las dos primeras ejecuciones del Checkpoint 5. Este diagnóstico es un paso separado de una eventual tercera ejecución del Checkpoint 5 — no la sustituye ni la autoriza. El Checkpoint 6 y el Día 3 no comienzan hasta que el Checkpoint 5 quede aprobado.
 
 ---
 
-*Última actualización: cierre de jornada del 6 de agosto de 2026. Checkpoints 2, 3 y 4 aprobados con evidencia real; Checkpoint 5 INCONCLUSO tras dos ejecuciones reales (rechazo de credenciales en la autenticación inicial de ambas; cero llamadas a `registrar_intento()`; cero filas creadas en `public.intentos`). La integración Next.js–Supabase está implementada en el árbol de trabajo pero no validada en ejecución. Checkpoint 6 y Día 3 no iniciados. No existe una fórmula documentada de avance por porcentaje: las estimaciones cualitativas de entradas anteriores no se extienden a esta entrada por no poder respaldarse con precisión adicional en este momento.*
+*Fin del registro del 6 de agosto de 2026. En esa fecha: Checkpoints 2, 3 y 4 aprobados con evidencia real; Checkpoint 5 INCONCLUSO tras dos ejecuciones reales (rechazo de credenciales en la autenticación inicial de ambas; cero llamadas a `registrar_intento()`; cero filas creadas en `public.intentos`). La integración Next.js–Supabase estaba implementada en el árbol de trabajo pero no validada en ejecución. Checkpoint 6 y Día 3 no iniciados. No existe una fórmula documentada de avance por porcentaje: las estimaciones cualitativas de entradas anteriores no se extienden a esa entrada por no poder respaldarse con precisión adicional.*
+
+***Todo lo anterior a esta línea corresponde a estados históricos. El estado final aceptado del proyecto comienza en la sección siguiente.***
+
+---
+
+## Cierre del Checkpoint 5 — 7 de agosto de 2026 — **APROBADO**
+
+**Estado final y autoritativo: Checkpoint 5 APROBADO.** Esta sección sustituye, para todos los efectos, cualquier afirmación anterior de este documento que describa el Checkpoint 5 como inconcluso, o que hable de "dos ejecuciones", "cero llamadas a `registrar_intento()`" o "cero filas en `public.intentos`". Aquellas afirmaciones eran correctas en su fecha y se conservan arriba únicamente como trazabilidad.
+
+### Cronología completa: cinco ejecuciones controladas
+
+Se realizaron **exactamente cinco** ejecuciones de `scripts/checkpoint5-intentos.mjs`, en este orden:
+
+| N.º | Resultado | Punto alcanzado |
+|---:|---|---|
+| 1 | INCONCLUSA | Rechazo del login inicial. Intento de diagnóstico; causa técnica exacta no demostrada. |
+| 2 | INCONCLUSA | Rechazo del login inicial (`status 400`, `invalid_credentials`). Sin llegar a `registrar_intento()`. |
+| 3 | `precondicion_incumplida` | Superó la autenticación, pero `public.ejercicios` no contenía ninguna fila utilizable. |
+| 4 | Error PostgreSQL `42702` | **Alcanzó `registrar_intento()`** y falló dentro de la función por ambigüedad de la columna `fecha`. |
+| 5 | **EXITOSA** | Llamada válida a `registrar_intento()`, con respuesta válida de la función. |
+
+### Migraciones aplicadas entre ejecuciones
+
+- Tras la **tercera** ejecución se creó y se aplicó **exactamente una vez** `supabase/migrations/0002_dia2_seed_ejercicio_minimo.sql`, que desbloqueó la precondición de ejercicio.
+- Tras la **cuarta** ejecución se creó y se aplicó **exactamente una vez** `supabase/migrations/0003_dia2_corregir_registrar_intento_fecha.sql`, que corrigió la ambigüedad de la columna `fecha` y eliminó el error `42702`.
+
+**Nota sobre las cabeceras de `0002` y `0003`:** ambos archivos contienen en sus comentarios la leyenda "este archivo NO ha sido ejecutado / requiere autorización expresa posterior". Esa leyenda **describe el estado que tenían en el momento de crearse**, antes de recibir la autorización correspondiente. Fue superada por las aplicaciones descritas arriba. Las cabeceras **no se modifican deliberadamente**: las tres migraciones (`0001`, `0002`, `0003`) se tratan como **inmutables** una vez aplicadas, y sus hashes SHA-256 deben permanecer constantes. La aclaración de estado vive aquí, en el documento vivo, no dentro del archivo aplicado.
+
+### Resultado de la quinta ejecución
+
+- Ejecuciones de la quinta pasada: **exactamente una**.
+- Llamadas válidas a `registrar_intento()`: **una**, con respuesta válida de la función.
+- Filas creadas en `public.intentos`: **exactamente una**, válida.
+- **Checkpoint 5: APROBADO.**
+
+### Restricción operativa
+
+**No se autoriza repetir la quinta ejecución**, ni ninguna ejecución adicional de `scripts/checkpoint5-intentos.mjs`. El checkpoint está cerrado y toda repetición crearía filas adicionales en `public.intentos` sin aportar evidencia nueva.
+
+---
+
+## Checkpoint 6 — Validación de la integración Next.js–Supabase
+
+**Definido y completado el 7 de agosto de 2026. Estado final: Checkpoint 6A APROBADO Y CERRADO; Checkpoint 6B APROBADO Y CERRADO; Checkpoint 6 completo APROBADO Y CERRADO.**
+
+### Objetivo
+
+Validar la integración de autenticación ya implementada antes del cierre formal del Día 2.
+
+### Checkpoint 6A — Validación local
+
+- Auditoría estática de registro, callback de confirmación, login, persistencia, logout y protección de rutas.
+- Ejecución de pruebas locales existentes relacionadas.
+- Verificación local de tipos y lint cuando existan scripts específicos.
+- `npm run build`.
+- Cero contacto con Supabase real.
+
+#### Cierre del Checkpoint 6A — APROBADO Y CERRADO (7 de agosto de 2026)
+
+**Alcance validado localmente**
+
+- Registro.
+- Confirmación de correo.
+- Login.
+- Persistencia y comprobación local de sesión.
+- Ruta protegida.
+- Logout exitoso y logout fallido.
+
+**Correcciones finales incorporadas antes del cierre**
+
+- `src/components/auth/VistaProtegida.tsx` quedó segura frente a la doble ejecución de efectos en React Strict Mode: se retiró la guardia persistente `yaVerificado` y cada ejecución del efecto conserva su propia variable de cancelación local, de modo que la ejecución vigente siempre mantiene un manejador activo.
+- `src/components/auth/ConfirmacionCorreo.tsx` reutiliza una única promesa de confirmación guardada en `useRef` y mantiene un manejador activo por cada ejecución del efecto, con cancelación local por ejecución.
+
+**Evidencia final aceptada**
+
+- 95/95 pruebas de autenticación aprobadas (`node --test src/lib/auth/contrato.test.mjs`).
+- `npm run lint` exitoso.
+- `npm run build` exitoso.
+- `git diff --check` exitoso.
+- Migraciones `0001`, `0002` y `0003` preservadas sin cambios (hashes SHA-256 idénticos antes y después de todo el trabajo del Checkpoint 6A).
+
+**Naturaleza de las regresiones de Strict Mode**
+
+Las regresiones que cubren el ciclo de vida de los efectos en React Strict Mode son **comprobaciones estructurales**: leen el texto fuente de los componentes y verifican la forma del código. **No ejecutan React ni montan los componentes**, porque el proyecto no incluye jsdom ni React Testing Library. Se aceptan acompañadas de `npm run lint` y `npm run build` satisfactorios, no como sustituto de una validación en ejecución.
+
+**Límites explícitos de este cierre** *(tal como se registraron en el momento de cerrar 6A; los cuatro últimos quedaron superados ese mismo día por el cierre del Checkpoint 6B y del Día 2 — ver más abajo)*
+
+- No hubo contacto con Supabase real durante el Checkpoint 6A. *(Sigue vigente: se refiere únicamente al alcance de 6A.)*
+- El Checkpoint 6B no se ejecutó. *(Superado: 6B se ejecutó y quedó aprobado.)*
+- El Checkpoint 6 completo todavía **no** está cerrado. *(Superado: cerrado.)*
+- El Día 2 continúa **abierto**. *(Superado: cerrado.)*
+- El Día 3 **no** está autorizado. *(Sigue vigente.)*
+
+### Checkpoint 6B — Validación funcional remota
+
+- Registro desde la interfaz.
+- Confirmación de correo.
+- Login.
+- Persistencia tras recargar.
+- Logout.
+- Comprobación de rutas protegidas después del logout.
+
+#### Cierre del Checkpoint 6B — APROBADO Y CERRADO (7 de agosto de 2026)
+
+Evidencia funcional **ejecutada en navegador real** (Chrome), contra el proyecto Supabase real mediante la clave pública. Esta evidencia es de naturaleza distinta a la del Checkpoint 6A: allí las regresiones de Strict Mode fueron comprobaciones estructurales sobre el texto fuente; aquí se observó el comportamiento real de la aplicación en ejecución.
+
+**1. Ruta protegida sin sesión**
+
+- Apertura de `/`.
+- Redirección correcta a `/login`.
+
+**2. Registro**
+
+- Una sola cuenta de prueba creada mediante el formulario público.
+- Mensaje visible de registro aceptado y confirmación pendiente ("La cuenta fue creada correctamente. Revisa tu correo para confirmar la cuenta antes de iniciar sesión.").
+
+**3. Confirmación**
+
+- Correo de confirmación recibido.
+- Enlace pulsado una sola vez.
+- **El retorno a la aplicación local no se completó**: la pestaña abierta por el enlace mostró en Safari "no pudo conectarse al servidor".
+- **No se observó ni se ejecutó localmente ningún `GET /auth/callback`**: la traza completa del servidor de desarrollo no contiene esa ruta.
+- La confirmación quedó respaldada **indirectamente** por el login posterior exitoso con la misma cuenta.
+
+**4. Login explícito**
+
+- Autenticación exitosa.
+- Navegación a `/`.
+- Contenido de sesión activa visible ("Sesión iniciada / Tu sesión está activa.").
+
+**5. Persistencia**
+
+- Sesión conservada después de una recarga completa.
+- Un acceso directo posterior a `/` mantuvo la sesión.
+
+**6. Logout**
+
+- Cierre de sesión exitoso.
+- Navegación a `/login`.
+
+**7. Protección posterior**
+
+- Acceso directo a `/` después del logout redirigió a `/login`.
+- La sesión no reapareció al recargar `/login`.
+
+**Los siete casos quedaron APROBADOS.**
+
+#### Limitación explícita del Caso 3 (confirmación de correo)
+
+- **El callback local no quedó validado de extremo a extremo.**
+- La aprobación del Caso 3 se basa en **evidencia funcional indirecta**: Supabase aceptó después el inicio de sesión de esa misma cuenta, lo que no ocurre con una cuenta sin confirmar.
+- El fallo de retorno observado en Safari queda registrado como **limitación ambiental no diagnosticada**. No se investigó su causa ni se modificó configuración alguna para sortearlo.
+- **No se afirma** que se haya demostrado la corrección de la configuración de Redirect URLs del proyecto Supabase.
+- **`/auth/callback` no debe presentarse como ruta ejecutada satisfactoriamente**: no llegó a cargarse ni una sola vez durante el Checkpoint 6B.
+- Esta limitación **no impidió** validar que la cuenta quedó utilizable, comprobado mediante el login posterior.
+
+#### Efectos remotos producidos durante el Checkpoint 6B
+
+- Se creó **una sola** cuenta de prueba.
+- Se confirmó su correo.
+- El perfil asociado **pudo** haber sido creado automáticamente por el trigger existente, pero **no se consultaron tablas** para verificarlo.
+- La cuenta **permanece** en Supabase (eliminarla habría exigido una operación administrativa no autorizada).
+- **No hubo ninguna otra modificación remota.**
+
+#### Integridad del repositorio durante el Checkpoint 6B
+
+- El estado Git inicial y final fue **idéntico**.
+- **Ningún archivo del repositorio fue modificado** durante 6B.
+- Las migraciones `0001`, `0002` y `0003` conservaron sus hashes SHA-256 sin cambio alguno.
+- No se ejecutaron SQL, migraciones, RPC, pruebas, lint, build ni `npm install`.
+- No se usaron `service_role`, Management API ni Dashboard administrativo.
+- No se realizaron operaciones Git ni deployment.
+
+### Condición de aprobación
+
+El Checkpoint 6 solo se aprueba cuando 6A y 6B estén aprobados. El Checkpoint 6 no incluye SQL, migraciones, carga de datos, correcciones de código, commit, push, merge ni deployment. La aprobación del Checkpoint 6 no cierra automáticamente el Día 2.
+
+**Condición cumplida el 7 de agosto de 2026**: 6A y 6B quedaron ambos aprobados, y el cierre del Día 2 se autorizó como decisión separada y explícita.
+
+---
+
+## Cierre del Día 2 — 7 de agosto de 2026
+
+| Elemento | Estado |
+|---|---|
+| Checkpoint 2 — autenticación y trigger | **APROBADO** |
+| Checkpoint 3 — aislamiento por RLS | **APROBADO** |
+| Checkpoint 4 — diagnósticos | **APROBADO** |
+| Checkpoint 5 — registro de intentos | **APROBADO** (quinta ejecución exitosa; ver "Cierre del Checkpoint 5") |
+| Checkpoint 6A | **APROBADO Y CERRADO** |
+| Checkpoint 6B | **APROBADO Y CERRADO** |
+| Checkpoint 6 completo | **APROBADO Y CERRADO** |
+| **Día 2 — Datos y login** | **APROBADO Y CERRADO** |
+| Avance del Día 2 | **100 %** |
+| Día 3 — Test de diagnóstico | **No iniciado ni autorizado** |
+
+El 100 % corresponde exclusivamente al Día 2. **No se asigna un porcentaje global a la Fase 2**, porque el roadmap del proyecto no contiene una fórmula explícita para calcularlo.
+
+Este cierre debe leerse junto con la limitación del Caso 3 registrada más arriba: el flujo de autenticación quedó validado funcionalmente de extremo a extremo **salvo** el retorno del callback de confirmación a la aplicación local, que no pudo comprobarse y permanece como limitación ambiental abierta. **`/auth/callback` no fue validada directamente de extremo a extremo.** Esta observación se mantiene abierta y **no invalida el cierre del Día 2**: la utilidad de la cuenta quedó demostrada por el inicio de sesión posterior con esa misma cuenta.
+
+---
+
+## Corrección documental y defensiva — 7 de agosto de 2026 (F0-C1R)
+
+Ajuste de coherencia previo a consolidar el Día 2 en Git. No modifica el estado aprobado de ningún checkpoint.
+
+- **`docs/PROGRESO.md`**: se unificó la cronología del Checkpoint 5. Las secciones anteriores al 7 de agosto quedan marcadas explícitamente como **estados históricos superados** y se añadió la sección "Cierre del Checkpoint 5" con las cinco ejecuciones, las dos migraciones aplicadas una sola vez cada una, y la restricción de no repetir la quinta ejecución.
+- **`src/lib/auth/contrato.ts`**: `ejecutarLogin()` dejó de declarar `sesion_iniciada` por la sola ausencia de error. Ahora exige **evidencia positiva** de `data.session` —el mismo principio defensivo que `ejecutarRegistro()` ya aplicaba con `data.user`— y, si falta, devuelve un error con mensaje fijo y sanitizado. La clasificación y sanitización de errores del proveedor no se modificó.
+- **`src/lib/auth/contrato.test.mjs`**: se añadió una prueba **conductual** que invoca realmente `ejecutarLogin()` con dependencias simuladas y comprueba que una respuesta `{ data: { session: null }, error: null }` **no** produce `sesion_iniciada`. Se actualizó el doble de la prueba de login exitoso preexistente para que incluya `session`, acorde al contrato reforzado.
+- Registro, reenvío de confirmación, logout, confirmación de correo y protección de vistas **no fueron alterados**.
+- Las migraciones `0001`, `0002` y `0003` **no fueron modificadas**: conservan sus hashes SHA-256.
