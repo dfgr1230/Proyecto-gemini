@@ -36,7 +36,12 @@ import {
   verificarUsuario,
   interpretarResultadoPersistencia,
 } from '../supabase/servidor.ts';
-import { extraerTextoDeRespuesta } from '../gemini/cliente.ts';
+import {
+  extraerTextoDeRespuesta,
+  llamarGemini,
+  sanearMensajeProveedor,
+  motivoDeFinalizacion,
+} from '../gemini/cliente.ts';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const RAIZ = path.resolve(AQUI, '../../..');
@@ -495,11 +500,88 @@ test('no existe ninguna variable NEXT_PUBLIC_GEMINI_* en el codigo', () => {
   }
 });
 
-test('la ruta de API no registra en consola la clave, el prompt ni la respuesta cruda del proveedor', () => {
-  for (const relativo of ['src/app/api/perfil/route.ts', 'src/lib/gemini/cliente.ts', 'src/lib/gemini/perfil.ts']) {
+test('la ruta de API y el armado del prompt no escriben nada en consola', () => {
+  // cliente.ts SI registra, a proposito: descartar el error del
+  // proveedor dejaba el 502 indiagnosticable (fue exactamente lo que
+  // oculto durante dias un 404 "model no longer available"). Lo que
+  // registra esta acotado y se comprueba en la prueba siguiente. El
+  // resto de la cadena sigue sin poder escribir nada, porque por ahi
+  // pasan el prompt y las respuestas del estudiante.
+  for (const relativo of ['src/app/api/perfil/route.ts', 'src/lib/gemini/perfil.ts']) {
     const contenido = readFileSync(path.join(RAIZ, relativo), 'utf8');
     assert.ok(!/console\.(log|error|warn|info|debug)/.test(contenido), `${relativo} no debe usar console.*`);
   }
+});
+
+test('la traza de cliente.ts nunca contiene la clave, aunque el proveedor la refleje en su mensaje', async () => {
+  const CLAVE_FALSA = 'AIzaSyDUMMY_valor_inventado_solo_para_esta_prueba_0123';
+  const claveOriginal = process.env.GEMINI_API_KEY;
+  const fetchOriginal = globalThis.fetch;
+  const errorOriginal = console.error;
+  const registrado = [];
+
+  process.env.GEMINI_API_KEY = CLAVE_FALSA;
+  console.error = (...args) => registrado.push(args.join(' '));
+  // El peor caso imaginable: el proveedor devuelve un error que incluye
+  // la clave completa dentro del mensaje.
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        error: {
+          code: 400,
+          status: 'INVALID_ARGUMENT',
+          message: `API key not valid: key=${CLAVE_FALSA}. Please pass a valid API key.`,
+        },
+      }),
+      { status: 400 }
+    );
+
+  try {
+    const resultado = await llamarGemini({
+      instruccion: 'texto de prueba',
+      esquema: { type: 'object', properties: {}, required: [] },
+    });
+    assert.equal(resultado.estado, 'error');
+    assert.equal(resultado.categoria, 'proveedor');
+  } finally {
+    console.error = errorOriginal;
+    globalThis.fetch = fetchOriginal;
+    if (claveOriginal === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = claveOriginal;
+  }
+
+  const traza = registrado.join('\n');
+  assert.ok(traza.length > 0, 'debe haberse registrado algo: sin traza el 502 es indiagnosticable');
+  assert.ok(!traza.includes(CLAVE_FALSA), 'la clave no puede aparecer en la traza');
+  assert.ok(traza.includes('[REDACTADO]'), 'la clave debe quedar sustituida por un marcador');
+  assert.ok(traza.includes('http=400'), 'la traza debe conservar el estado HTTP, que es lo util');
+  assert.ok(traza.includes('INVALID_ARGUMENT'), 'y el codigo del proveedor');
+});
+
+test('se registra el finishReason cuando el modelo responde 200 pero sin contenido', () => {
+  // Caso real de Gemini: termina por SAFETY o MAX_TOKENS y "parts" no
+  // existe. Sin este dato, un 200 vacio y un 200 malformado se ven igual.
+  assert.equal(motivoDeFinalizacion({ candidates: [{ finishReason: 'MAX_TOKENS' }] }), 'MAX_TOKENS');
+  assert.equal(motivoDeFinalizacion({ candidates: [] }), null);
+  assert.equal(motivoDeFinalizacion(null), null);
+});
+
+test('la traza trunca mensajes largos del proveedor', () => {
+  const largo = sanearMensajeProveedor('x'.repeat(5000));
+  assert.ok(largo.length < 250, `el mensaje saneado mide ${largo.length}`);
+});
+
+test('la traza nunca lleva el prompt ni el perfil: registrarFallo solo recibe campos acotados', () => {
+  const contenido = readFileSync(path.join(RAIZ, 'src/lib/gemini/cliente.ts'), 'utf8');
+  // Toda escritura en consola pasa por registrarFallo, que solo acepta
+  // etapa, categoria, http, codigo y mensaje saneado.
+  const usos = contenido.match(/console\.(log|error|warn|info|debug)/g) ?? [];
+  assert.equal(usos.length, 1, 'debe existir un unico punto de escritura en consola');
+  const lineaConsola = contenido
+    .split('\n')
+    .find((l) => /console\.error/.test(l));
+  assert.ok(/registrarFallo|partes/.test(lineaConsola ?? ''), 'la escritura debe usar el formateador acotado');
+  assert.ok(!/instruccion|peticion\.instruccion|cuerpo\)/.test(lineaConsola ?? ''));
 });
 
 test('el mensaje de error mostrado al usuario es fijo y no revela nada del proveedor', () => {

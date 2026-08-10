@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { obtenerClienteSupabase } from '@/lib/supabase/client';
 import { ejecutarLogout, verificarSesionProtegida } from '@/lib/auth/contrato';
+import { consultarPerfilPropio } from '@/lib/diagnostico/consulta';
 
 type EstadoVista = 'cargando' | 'redirigiendo' | 'autenticado';
 type EstadoLogout = 'inicial' | 'cerrando' | 'error';
@@ -19,6 +20,11 @@ export default function VistaProtegida() {
   const [estado, setEstado] = useState<EstadoVista>('cargando');
   const [estadoLogout, setEstadoLogout] = useState<EstadoLogout>('inicial');
   const [mensajeErrorLogout, setMensajeErrorLogout] = useState<string | null>(null);
+  // null mientras no se sabe. Determina si el unico boton de accion
+  // ofrece hacer el test o ver el perfil ya generado: mostrar "hacer el
+  // test" a quien ya lo hizo lleva a una redireccion inmediata que se
+  // percibe como un fallo.
+  const [tieneDiagnostico, setTieneDiagnostico] = useState<boolean | null>(null);
 
   // Sin guardia de "ya se ejecuto una vez" (a proposito -- ver nota mas
   // abajo): en Strict Mode, React ejecuta este efecto, invoca de
@@ -46,17 +52,31 @@ export default function VistaProtegida() {
     let cancelado = false;
     const supabase = obtenerClienteSupabase();
 
-    verificarSesionProtegida({
-      getSession: () => supabase.auth.getSession(),
-    }).then((resultado) => {
+    async function cargar() {
+      const sesion = await verificarSesionProtegida({
+        getSession: () => supabase.auth.getSession(),
+      });
       if (cancelado) return;
-      if (resultado === 'sin_sesion') {
+
+      if (sesion === 'sin_sesion') {
         setEstado('redirigiendo');
         router.replace('/login');
         return;
       }
       setEstado('autenticado');
-    });
+
+      // Consulta secundaria: solo decide la etiqueta del boton, asi que
+      // no bloquea la vista ni la invalida si falla. Ante un error se
+      // deja el valor conservador (todavia no hay diagnostico), y la
+      // propia ruta /diagnostico corregira el destino si hace falta.
+      const consulta = await consultarPerfilPropio({
+        seleccionar: () => supabase.from('diagnosticos').select('perfil_detectado').limit(1),
+      });
+      if (cancelado) return;
+      setTieneDiagnostico(consulta.estado !== 'sin_diagnostico' && consulta.estado !== 'error');
+    }
+
+    cargar();
 
     return () => {
       cancelado = true;
@@ -114,13 +134,17 @@ export default function VistaProtegida() {
         </p>
       )}
 
-      {/* Unico punto de entrada al diagnostico del Dia 3. */}
-      <Link
-        href="/diagnostico"
-        className="mt-6 flex h-11 w-full items-center justify-center rounded-full bg-foreground text-sm font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
-      >
-        Hacer el test de diagnóstico
-      </Link>
+      {/* Unico punto de entrada, contextual segun exista o no perfil.
+          Mientras se resuelve la consulta no se dibuja ningun boton, para
+          no mostrar una etiqueta que cambie sola bajo el cursor. */}
+      {tieneDiagnostico !== null && (
+        <Link
+          href={tieneDiagnostico ? '/perfil' : '/diagnostico'}
+          className="mt-6 flex h-11 w-full items-center justify-center rounded-full bg-foreground text-sm font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
+        >
+          {tieneDiagnostico ? 'Ver mi perfil de aprendizaje' : 'Hacer el test de diagnóstico'}
+        </Link>
+      )}
 
       <button
         type="button"

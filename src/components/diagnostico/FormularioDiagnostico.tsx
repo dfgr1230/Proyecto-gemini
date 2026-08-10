@@ -2,27 +2,19 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { obtenerClienteSupabase } from '@/lib/supabase/client';
 import { verificarSesionProtegida } from '@/lib/auth/contrato';
 import { PREGUNTAS, CANTIDAD_PREGUNTAS } from '@/lib/diagnostico/preguntas';
+import { consultarPerfilPropio } from '@/lib/diagnostico/consulta';
 import {
   validarRespuestasDiagnostico,
   MENSAJE_ERROR_PERFIL,
   MENSAJE_ERROR_RESPUESTAS,
   MENSAJE_ERROR_SESION,
-  type PerfilDetectado,
   type RespuestasDiagnostico,
 } from '@/lib/diagnostico/contrato';
 
-type EstadoVista = 'cargando' | 'redirigiendo' | 'respondiendo' | 'generando' | 'perfil' | 'error';
-
-const ETIQUETA_ESTILO: Record<string, string> = {
-  visual: 'Visual',
-  auditivo: 'Auditivo',
-  lectoescritor: 'Lectura y escritura',
-  kinestesico: 'Práctico',
-};
+type EstadoVista = 'cargando' | 'redirigiendo' | 'respondiendo' | 'generando' | 'error';
 
 export default function FormularioDiagnostico() {
   const router = useRouter();
@@ -31,7 +23,6 @@ export default function FormularioDiagnostico() {
   // error: es lo que permite reintentar sin volver a responder las 12
   // preguntas.
   const [respuestas, setRespuestas] = useState<RespuestasDiagnostico>({});
-  const [perfil, setPerfil] = useState<PerfilDetectado | null>(null);
   const [mensajeError, setMensajeError] = useState<string | null>(null);
 
   // Misma proteccion de ruta que VistaProtegida: cada ejecucion del
@@ -42,17 +33,37 @@ export default function FormularioDiagnostico() {
     let cancelado = false;
     const supabase = obtenerClienteSupabase();
 
-    verificarSesionProtegida({
-      getSession: () => supabase.auth.getSession(),
-    }).then((resultado) => {
+    async function preparar() {
+      const sesion = await verificarSesionProtegida({
+        getSession: () => supabase.auth.getSession(),
+      });
       if (cancelado) return;
-      if (resultado === 'sin_sesion') {
+
+      if (sesion === 'sin_sesion') {
         setEstado('redirigiendo');
         router.replace('/login');
         return;
       }
+
+      // Comprobacion previa: si ya hay diagnostico, este formulario no
+      // debe llegar a mostrarse. usuario_id es UNIQUE y no hay policy de
+      // DELETE, asi que un segundo envio no puede prosperar -- es mejor
+      // no ofrecerlo que dejar que falle con un 409.
+      const consulta = await consultarPerfilPropio({
+        seleccionar: () => supabase.from('diagnosticos').select('perfil_detectado').limit(1),
+      });
+      if (cancelado) return;
+
+      if (consulta.estado !== 'sin_diagnostico') {
+        setEstado('redirigiendo');
+        router.replace('/perfil');
+        return;
+      }
+
       setEstado('respondiendo');
-    });
+    }
+
+    preparar();
 
     return () => {
       cancelado = true;
@@ -106,6 +117,16 @@ export default function FormularioDiagnostico() {
       const cuerpo = await respuesta.json().catch(() => null);
 
       if (!respuesta.ok || !cuerpo?.ok || !cuerpo?.perfil) {
+        // El diagnostico ya existia (409). NO es un fallo que el usuario
+        // pueda resolver reintentando: su perfil ya esta guardado, asi
+        // que se le lleva a verlo en vez de invitarle a repetir un envio
+        // que nunca podra prosperar.
+        if (cuerpo?.codigo === 'diagnostico_existente') {
+          setEstado('redirigiendo');
+          router.replace('/perfil');
+          return;
+        }
+
         // No se inventa ningun perfil local para disimular el fallo: si
         // Gemini no respondio, no hay perfil que mostrar.
         setMensajeError(
@@ -115,8 +136,12 @@ export default function FormularioDiagnostico() {
         return;
       }
 
-      setPerfil(cuerpo.perfil as PerfilDetectado);
-      setEstado('perfil');
+      // El perfil ya esta persistido: la vista autoritativa es /perfil,
+      // que lo relee de la base de datos. Asi lo que se ve tras generar
+      // es exactamente lo mismo que se vera tras recargar o volver a
+      // entrar, sin una copia en memoria que pueda divergir.
+      setEstado('redirigiendo');
+      router.replace('/perfil');
     } catch {
       setMensajeError(MENSAJE_ERROR_PERFIL);
       setEstado('error');
@@ -130,46 +155,6 @@ export default function FormularioDiagnostico() {
         className="w-full max-w-2xl rounded-lg border border-black/[.08] bg-white p-8 text-center dark:border-white/[.145] dark:bg-zinc-950"
       >
         <p className="text-sm text-zinc-600 dark:text-zinc-400">Cargando…</p>
-      </div>
-    );
-  }
-
-  if (estado === 'perfil' && perfil) {
-    return (
-      <div
-        role="status"
-        className="w-full max-w-2xl rounded-lg border border-black/[.08] bg-white p-8 dark:border-white/[.145] dark:bg-zinc-950"
-      >
-        <h1 className="text-xl font-semibold text-zinc-950 dark:text-zinc-50">Tu orientación de aprendizaje</h1>
-
-        <dl className="mt-6 flex flex-col gap-4">
-          <div>
-            <dt className="text-sm font-medium text-zinc-600 dark:text-zinc-400">Cómo aprendes mejor</dt>
-            <dd className="text-base text-zinc-950 dark:text-zinc-50">
-              {ETIQUETA_ESTILO[perfil.estilo_aprendizaje] ?? perfil.estilo_aprendizaje}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-sm font-medium text-zinc-600 dark:text-zinc-400">Nivel inicial sugerido</dt>
-            <dd className="text-base text-zinc-950 dark:text-zinc-50">{perfil.nivel_sugerido} de 5</dd>
-          </div>
-          <div>
-            <dt className="text-sm font-medium text-zinc-600 dark:text-zinc-400">Qué significa</dt>
-            <dd className="text-base text-zinc-950 dark:text-zinc-50">{perfil.explicacion}</dd>
-          </div>
-        </dl>
-
-        <p className="mt-6 text-sm text-zinc-600 dark:text-zinc-400">
-          Esta es una orientación inicial para empezar, no una evaluación definitiva: se irá ajustando
-          a medida que practiques.
-        </p>
-
-        <Link
-          href="/"
-          className="mt-6 inline-flex h-11 items-center justify-center rounded-full bg-foreground px-5 text-sm font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
-        >
-          Volver al inicio
-        </Link>
       </div>
     );
   }

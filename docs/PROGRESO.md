@@ -565,3 +565,62 @@ Se conservan intactos: las 19 raíces, los estilos y niveles permitidos, los `RE
 ### Requisito añadido para F1-A2
 
 Confirmar que **`server_encoding` es `UTF8`** antes de aplicar `0004`: `normalize()` exige esa codificación.
+
+---
+
+## Sprint A — Gemini real y perfil persistente (10 de agosto de 2026)
+
+**Estado: el recorrido positivo completo funciona de extremo a extremo.** `0004` está aplicada en remoto y verificada equivalente al archivo local. Hay una llamada real a Gemini, un perfil validado y persistido, y una vista que lo recupera.
+
+### Causa del `502`: el modelo estaba retirado
+
+Las dos llamadas anteriores devolvían `502 perfil_no_disponible` sin más pistas, porque `cliente.ts` descartaba a propósito el cuerpo del error del proveedor. Al instrumentarlo apareció la causa en el primer intento:
+
+```
+http=404 codigo=NOT_FOUND
+mensaje="This model models/gemini-2.5-flash is no longer available to new users."
+```
+
+No era la clave, ni el `responseSchema`, ni la red, ni la facturación. `gemini-2.5-flash` **sigue apareciendo** en el catálogo de `/v1beta/models`, pero ya no acepta `generateContent` con claves creadas recientemente: el listado no es prueba de disponibilidad.
+
+Se sustituyó por **`gemini-3.6-flash`**, elegido entre los 36 modelos con `generateContent` habilitados para esta clave. Se prefirió un nombre fijo antes que el alias `gemini-flash-latest` para que la versión no cambie sola entre la grabación del video y la revisión del jurado.
+
+El `responseSchema` no necesitó ningún cambio: `maxLength`, `minimum` y `maximum` se aceptan tal cual.
+
+### La decisión de no registrar nada era la que ocultaba el fallo
+
+Descartar el error del proveedor protegía bien y diagnosticaba fatal: cuatro causas muy distintas colapsaban en el mismo `502`. Ahora `cliente.ts` escribe una traza **solo de servidor** con etapa, estado HTTP, categoría, código del proveedor y mensaje saneado y truncado a 200 caracteres.
+
+La respuesta HTTP que ve el navegador **no cambió**: sigue siendo el mismo conjunto cerrado de códigos. Y la prueba que antes prohibía `console.*` en el archivo fue reemplazada por una que comprueba la propiedad real: se simula un proveedor que devuelve la clave completa dentro de su mensaje de error y se verifica que en la traza aparece `[REDACTADO]`, nunca la clave.
+
+### Ejecución positiva
+
+| | |
+|---|---|
+| `POST /api/perfil` | **200** en 4,3 s |
+| Diagnósticos creados | **1** (exactamente) |
+| Respuestas persistidas | **12** (`p1`…`p12`) |
+| Claves del perfil | **3** (`estilo_aprendizaje`, `nivel_sugerido`, `explicacion`) |
+| Registros parciales o duplicados | ninguno |
+
+### Perfil persistente
+
+Ruta nueva `/perfil`: relee `diagnosticos.perfil_detectado` por RLS y **vuelve a validarlo con el mismo contrato** antes de mostrarlo. La fila puede haberse escrito por otra vía —`authenticated` conserva `INSERT` directo sobre `(usuario_id, respuestas)`—, así que confiar en la base de datos como si fuera código propio sería un error.
+
+Se distinguen cuatro estados, y la distinción importa: `sin_diagnostico` redirige al test, pero un `error` de red **no** lo hace. Confundirlos empujaría al usuario hacia un segundo envío que la restricción `UNIQUE` rechazaría. Un `perfil_incompleto` (fila sin perfil válido) tampoco redirige: mandar al test a quien ya ocupa su única fila es un bucle sin salida, porque no hay policy de `DELETE`.
+
+El `409` por diagnóstico existente ya no muestra "puedes intentarlo de nuevo": lleva a `/perfil`. El formulario, además, comprueba antes de dibujarse si ya hay diagnóstico, de modo que ese `409` no debería llegar a ocurrir.
+
+La tarjeta del perfil se extrajo a un componente compartido y el bloque en línea del formulario se eliminó: tras generar se redirige a `/perfil`, así que lo que se ve al terminar el test es exactamente lo mismo que se verá al volver mañana, sin una copia en memoria que pueda divergir.
+
+Verificado en vivo: recarga dura, y cierre de sesión con nuevo inicio de sesión manual. El perfil sobrevive a ambos.
+
+### Evidencia
+
+- Suite completa: **282/282**.
+- `npm run lint` y `npm run build`: exitosos. `/perfil` aparece en el manifiesto de rutas.
+- Título y descripción del layout corregidos (decían "Create Next App"), e idioma del documento pasado a `es`.
+
+### Pendiente
+
+Actividad adaptativa, registro de intentos y despliegue. Las pruebas negativas de la RPC siguen aplazadas hasta después de la entrega.

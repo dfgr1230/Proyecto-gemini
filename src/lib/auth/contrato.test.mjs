@@ -890,7 +890,10 @@ test('VistaProtegida.tsx verifica la sesion con verificarSesionProtegida antes d
 
 test('VistaProtegida.tsx redirige a /login con replace cuando no hay sesion', () => {
   const contenido = readFileSync(path.join(RAIZ, RUTA_VISTA_PROTEGIDA), 'utf8');
-  assert.ok(contenido.includes("resultado === 'sin_sesion'"));
+  // Se comprueba la comparacion con 'sin_sesion' sin fijar el nombre de
+  // la variable que sostiene el resultado: lo que importa es que exista
+  // esa rama y que redirija con replace, no como se llame el enlace.
+  assert.ok(/===\s*'sin_sesion'/.test(contenido), "debe existir una rama para 'sin_sesion'");
   assert.ok(contenido.includes("router.replace('/login')"));
 });
 

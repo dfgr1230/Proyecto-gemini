@@ -22,7 +22,14 @@ if (typeof window !== 'undefined') {
 // sobrescribirse con la variable de entorno GEMINI_MODELO, que
 // deliberadamente NO lleva el prefijo NEXT_PUBLIC_ (no debe viajar al
 // navegador ni aparecer en el bundle).
-export const MODELO_GEMINI_POR_DEFECTO = 'gemini-2.5-flash';
+// El valor anterior, 'gemini-2.5-flash', devolvia 404 NOT_FOUND con el
+// mensaje "no longer available to new users": el modelo sigue apareciendo
+// en el catalogo de /v1beta/models pero ya no acepta generateContent con
+// claves creadas recientemente. Se sustituye por el flash estable mas
+// reciente de los habilitados para esta clave. Se elige un nombre fijo y
+// no un alias movil ('gemini-flash-latest') para que la version no cambie
+// sola entre la grabacion del video y la revision del jurado.
+export const MODELO_GEMINI_POR_DEFECTO = 'gemini-3.6-flash';
 
 export function obtenerModeloGemini(): string {
   const configurado = process.env.GEMINI_MODELO?.trim();
@@ -51,6 +58,69 @@ export type ResultadoGemini =
   | { estado: 'ok'; texto: string }
   | { estado: 'error'; categoria: 'configuracion' | 'red' | 'proveedor' | 'respuesta_vacia' };
 
+// --- Diagnostico de servidor -------------------------------------------
+//
+// La respuesta HTTP que ve el navegador NO cambia: sigue siendo un unico
+// codigo cerrado ('perfil_no_disponible'). Lo que se agrega aqui es una
+// traza EXCLUSIVAMENTE de servidor, porque descartar el cuerpo del error
+// del proveedor dejaba el fallo indiagnosticable: cuatro causas muy
+// distintas (clave invalida, esquema rechazado, modelo inexistente, cuota
+// agotada) colapsaban en el mismo 502 sin ninguna pista.
+//
+// Nunca se registran: la clave, las cabeceras, la URL, el prompt, las
+// respuestas del estudiante ni el perfil generado.
+
+const LONGITUD_MAXIMA_MENSAJE = 200;
+
+// Elimina de un mensaje del proveedor cualquier cosa con forma de
+// credencial antes de escribirlo en el log, y lo trunca. Defensa en
+// profundidad: Google no deberia reflejar la clave en un mensaje de
+// error, pero el log no es el lugar para confiar en eso.
+export function sanearMensajeProveedor(mensaje: string): string {
+  const limpio = mensaje
+    .replace(/AIza[0-9A-Za-z_-]{10,}/g, '[REDACTADO]')
+    .replace(/\b(key|apikey|api_key|token|authorization)\b\s*[=:]\s*\S+/gi, '$1=[REDACTADO]')
+    .replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, '[REDACTADO]')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return limpio.length > LONGITUD_MAXIMA_MENSAJE
+    ? `${limpio.slice(0, LONGITUD_MAXIMA_MENSAJE)}…`
+    : limpio;
+}
+
+// Extrae solo los campos utiles del error estandar de Google
+// ({ error: { code, status, message } }). Cualquier otra forma se ignora.
+export function resumirErrorProveedor(cuerpo: unknown): { codigo: string; mensaje: string } {
+  if (cuerpo === null || typeof cuerpo !== 'object') return { codigo: '?', mensaje: '' };
+  const error = (cuerpo as { error?: unknown }).error;
+  if (error === null || typeof error !== 'object') return { codigo: '?', mensaje: '' };
+
+  const estado = (error as { status?: unknown }).status;
+  const codigo = (error as { code?: unknown }).code;
+  const mensaje = (error as { message?: unknown }).message;
+
+  return {
+    codigo:
+      typeof estado === 'string' ? estado : typeof codigo === 'number' ? String(codigo) : '?',
+    mensaje: typeof mensaje === 'string' ? sanearMensajeProveedor(mensaje) : '',
+  };
+}
+
+function registrarFallo(campos: {
+  etapa: string;
+  categoria: string;
+  http?: number;
+  codigo?: string;
+  mensaje?: string;
+}) {
+  const partes = [`etapa=${campos.etapa}`, `categoria=${campos.categoria}`];
+  if (campos.http !== undefined) partes.push(`http=${campos.http}`);
+  if (campos.codigo) partes.push(`codigo=${campos.codigo}`);
+  if (campos.mensaje) partes.push(`mensaje="${campos.mensaje}"`);
+  console.error(`[gemini] ${partes.join(' ')}`);
+}
+
 // Realiza UNA llamada a generateContent. Devuelve el texto crudo que
 // entrego el modelo, sin interpretarlo: el parseo y la validacion son
 // responsabilidad de src/lib/gemini/perfil.ts.
@@ -62,6 +132,9 @@ export type ResultadoGemini =
 export async function llamarGemini(peticion: PeticionGemini): Promise<ResultadoGemini> {
   const clave = process.env.GEMINI_API_KEY;
   if (!clave || clave.trim().length === 0) {
+    // Se registra unicamente el hecho de que falta, nunca su valor ni su
+    // longitud.
+    registrarFallo({ etapa: 'configuracion', categoria: 'configuracion' });
     return { estado: 'error', categoria: 'configuracion' };
   }
 
@@ -93,12 +166,23 @@ export async function llamarGemini(peticion: PeticionGemini): Promise<ResultadoG
       body: JSON.stringify(cuerpo),
     });
   } catch {
+    registrarFallo({ etapa: 'fetch', categoria: 'red' });
     return { estado: 'error', categoria: 'red' };
   }
 
   if (!respuesta.ok) {
-    // El cuerpo del error del proveedor se descarta a proposito: no se
-    // lee, no se registra y no se reenvia.
+    // El cuerpo del error se lee SOLO para extraer el estado y un mensaje
+    // saneado con destino al log del servidor. Nunca se reenvia al
+    // navegador: la respuesta HTTP hacia el cliente no cambia.
+    const cuerpoError = await respuesta.json().catch(() => null);
+    const { codigo, mensaje } = resumirErrorProveedor(cuerpoError);
+    registrarFallo({
+      etapa: 'respuesta_http',
+      categoria: 'proveedor',
+      http: respuesta.status,
+      codigo,
+      mensaje,
+    });
     return { estado: 'error', categoria: 'proveedor' };
   }
 
@@ -106,15 +190,38 @@ export async function llamarGemini(peticion: PeticionGemini): Promise<ResultadoG
   try {
     datos = await respuesta.json();
   } catch {
+    registrarFallo({ etapa: 'json', categoria: 'respuesta_vacia', http: respuesta.status });
     return { estado: 'error', categoria: 'respuesta_vacia' };
   }
 
   const texto = extraerTextoDeRespuesta(datos);
   if (texto === null || texto.trim().length === 0) {
+    // Caso tipico: el modelo termino por finishReason (MAX_TOKENS,
+    // SAFETY, RECITATION) y no hay "parts". Se registra ese motivo,
+    // nunca el contenido.
+    registrarFallo({
+      etapa: 'extraccion',
+      categoria: 'respuesta_vacia',
+      http: respuesta.status,
+      codigo: motivoDeFinalizacion(datos) ?? '?',
+    });
     return { estado: 'error', categoria: 'respuesta_vacia' };
   }
 
   return { estado: 'ok', texto };
+}
+
+// Lee candidates[0].finishReason cuando existe. Es un enumerado cerrado
+// del proveedor (STOP, MAX_TOKENS, SAFETY, RECITATION...), no contenido
+// generado, por lo que puede registrarse sin filtrar nada del estudiante.
+export function motivoDeFinalizacion(datos: unknown): string | null {
+  if (datos === null || typeof datos !== 'object') return null;
+  const candidatos = (datos as { candidates?: unknown }).candidates;
+  if (!Array.isArray(candidatos) || candidatos.length === 0) return null;
+  const primero = candidatos[0];
+  if (primero === null || typeof primero !== 'object') return null;
+  const motivo = (primero as { finishReason?: unknown }).finishReason;
+  return typeof motivo === 'string' ? motivo : null;
 }
 
 // Navega la forma documentada de la respuesta de generateContent:
