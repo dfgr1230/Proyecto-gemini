@@ -1,0 +1,24 @@
+# Exclusiones explicitas para "vercel deploy".
+#
+# Este archivo existe porque el MVP se despliega a produccion desde la
+# rama de trabajo con "vercel --prod", sin fusionar con master: en ese
+# modo el CLI sube el directorio local, no un commit de GitHub, asi que
+# conviene declarar sin ambiguedad que NO debe viajar.
+#
+# Las variables de entorno de produccion viven en la configuracion del
+# proyecto en Vercel, nunca en el paquete que se sube.
+.env
+.env.*
+!.env.example
+
+# Artefactos y cache locales: Vercel construye desde cero.
+node_modules
+.next
+*.tsbuildinfo
+
+# Cache del CLI de Supabase (pooler-url contiene una cadena de conexion).
+supabase/.temp
+
+# Herramientas locales que no forman parte de la aplicacion desplegada.
+.claude
+scripts
