@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { obtenerClienteSupabase } from '@/lib/supabase/client';
 import { ejecutarLogout, verificarSesionProtegida } from '@/lib/auth/contrato';
 
@@ -112,6 +113,14 @@ export default function VistaProtegida() {
           {mensajeErrorLogout}
         </p>
       )}
+
+      {/* Unico punto de entrada al diagnostico del Dia 3. */}
+      <Link
+        href="/diagnostico"
+        className="mt-6 flex h-11 w-full items-center justify-center rounded-full bg-foreground text-sm font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
+      >
+        Hacer el test de diagnóstico
+      </Link>
 
       <button
         type="button"

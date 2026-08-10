@@ -43,3 +43,8 @@ next-env.d.ts
 
 # Claude Code (config local de esta sesión, no es parte del proyecto)
 .claude/settings.local.json
+
+# Supabase CLI: caché local del enlace al proyecto remoto. No es código
+# fuente y "pooler-url" contiene una cadena de conexión a la base de
+# datos. Las migraciones sí se versionan (supabase/migrations/).
+supabase/.temp/

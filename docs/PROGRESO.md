@@ -10,7 +10,7 @@ Este archivo se actualiza al cierre de cada día de trabajo. Refleja el estado r
 |---|---|
 | **Día 1 — Cimientos** | ✅ 100% completado |
 | **Día 2 — Datos y login** | ✅ 100% completado — cerrado el 7 de agosto de 2026. Checkpoints 2, 3, 4 y 5 aprobados con evidencia real; Checkpoint 6 (6A local + 6B funcional remoto) APROBADO Y CERRADO. Ver la sección "Checkpoint 6" para el alcance validado y sus limitaciones |
-| Día 3 — Test de diagnóstico | ⬜ Pendiente |
+| Día 3 — Test de diagnóstico | 🟨 En progreso — recorrido local implementado y validado (F1-A1), endurecido en F1-A1R y F1-A1R2. Pendiente: aplicar `0004` y ejecutar una llamada real a Gemini (compuerta F1-A2) |
 | Día 4 — Conectar la IA | ⬜ Pendiente |
 | Día 5 — Ciclo adaptativo | ⬜ Pendiente |
 | Día 6 — Pulido + prueba real | ⬜ Pendiente |
@@ -447,3 +447,121 @@ Ajuste de coherencia previo a consolidar el Día 2 en Git. No modifica el estado
 - **`src/lib/auth/contrato.test.mjs`**: se añadió una prueba **conductual** que invoca realmente `ejecutarLogin()` con dependencias simuladas y comprueba que una respuesta `{ data: { session: null }, error: null }` **no** produce `sesion_iniciada`. Se actualizó el doble de la prueba de login exitoso preexistente para que incluya `session`, acorde al contrato reforzado.
 - Registro, reenvío de confirmación, logout, confirmación de correo y protección de vistas **no fueron alterados**.
 - Las migraciones `0001`, `0002` y `0003` **no fueron modificadas**: conservan sus hashes SHA-256.
+
+---
+
+## Día 3 — Diagnóstico y perfil Gemini — F1-A1 (7 de agosto de 2026)
+
+**Estado: recorrido local implementado y validado. NO se ha ejecutado ninguna llamada real a Gemini, ni se ha aplicado la migración `0004`, ni se ha escrito nada en Supabase.**
+
+Rama de trabajo: `feature/dia3-diagnostico-gemini`, creada desde el commit consolidado del Día 2 (`c227f97`). Sin commit ni push en esta compuerta.
+
+### Qué quedó construido
+
+- **Banco de 12 preguntas** (`src/lib/diagnostico/preguntas.ts`), de contenido exclusivamente educativo: preferencias de aprendizaje y autopercepción de dificultad. No se pregunta ni se infiere ninguna condición clínica, y no se solicita ningún dato personal.
+- **Contrato del diagnóstico** (`src/lib/diagnostico/contrato.ts`): valida las respuestas (12 exactas, identificadores conocidos, opciones pertenecientes a su pregunta, sin texto libre) y valida el perfil con vocabulario cerrado.
+- **Cliente de Gemini de servidor** (`src/lib/gemini/cliente.ts`): `fetch` nativo contra la API oficial, con salida estructurada (`responseMimeType` + `responseSchema`). Sin SDK: no se instaló ninguna dependencia.
+- **Orquestación del perfil** (`src/lib/gemini/perfil.ts`): construye la instrucción y valida la respuesta. Parseo estricto con `JSON.parse`, sin extracción por expresiones regulares.
+- **Ruta de servidor** (`src/app/api/perfil/route.ts`): autentica, valida, genera y persiste, en ese orden.
+- **Interfaz** (`/diagnostico` + `FormularioDiagnostico.tsx`), protegida por la sesión existente, con progreso visible y reintento sin pérdida de respuestas.
+- **Migración `0004`** (propuesta, **no ejecutada**): función de validación `es_perfil_detectado_valido()` y RPC `guardar_diagnostico_con_perfil()`.
+
+### Decisiones que conviene recordar
+
+- **Persistencia atómica y al final.** `diagnosticos.usuario_id` es UNIQUE y no existe policy de DELETE: si se insertaran las respuestas antes de generar el perfil, un fallo de Gemini dejaría ocupado el único diagnóstico permitido, sin perfil y sin forma de reintentar. Por eso se escriben respuestas y perfil juntos, y solo cuando el perfil ya es válido.
+- **RPC en lugar de policy de UPDATE.** Abrir `UPDATE` sobre `perfil_detectado` permitiría al navegador escribir cualquier JSON en esa columna. La RPC `SECURITY DEFINER` concentra la escritura y valida la estructura dentro de la base de datos.
+- **Sesión en el servidor sin `service_role`.** El navegador envía su `access_token` en la cabecera `Authorization`; el servidor lo valida con `getUser(token)` contra Supabase Auth y opera con la clave publicable, de modo que las policies RLS existentes siguen siendo la autorización real.
+- **El perfil es una orientación educativa**, nunca un diagnóstico: solo estilo de aprendizaje, nivel sugerido (1-5, la misma escala de `ejercicios.nivel_dificultad`) y una explicación breve. Cualquier propiedad adicional se rechaza, y una explicación con vocabulario clínico invalida el perfil completo.
+
+### Evidencia local
+
+- `node --test src/lib/auth/contrato.test.mjs`: **96/96** aprobadas (sin regresiones).
+- `node --test src/lib/diagnostico/contrato.test.mjs`: **46/46** aprobadas.
+- `npm run lint` y `npm run build`: exitosos. `/api/perfil` se construye como ruta dinámica de servidor.
+- Comprobado sobre el bundle generado: `GEMINI_API_KEY`, el endpoint de Gemini y el texto de la instrucción **no aparecen** en `.next/static`.
+- Migraciones `0001`, `0002` y `0003`: hashes SHA-256 sin cambio.
+
+### Pendiente (compuerta F1-A2)
+
+Aplicar `0004` de forma controlada, cargar `GEMINI_API_KEY` en el entorno, y validar una llamada real a Gemini con persistencia real.
+
+---
+
+## Día 3 — F1-A1R: endurecimiento de la migración `0004` (7 de agosto de 2026)
+
+**Estado: Día 3 sigue EN PROGRESO. `0004` continúa SIN APLICARSE. No hay llamada real a Gemini ni persistencia remota comprobada.**
+
+Corrección local sobre lo construido en F1-A1. Rama `feature/dia3-diagnostico-gemini`, sin commit ni push.
+
+### Hallazgo corregido: la barrera clínica solo existía en TypeScript
+
+La primera versión de `0004` delegaba el filtro de vocabulario clínico exclusivamente en `src/lib/diagnostico/contrato.ts`, para no duplicar la lista. **Ese razonamiento era incorrecto.** La RPC `guardar_diagnostico_con_perfil()` está expuesta a `authenticated`, de modo que un usuario autenticado puede invocarla **directamente** —desde la consola del navegador con el cliente de Supabase— sin pasar nunca por `/api/perfil`. Con la barrera solo en la aplicación, almacenar un perfil con etiquetas clínicas era trivial.
+
+Ahora **la base de datos aplica el mismo límite**: `es_perfil_detectado_valido()` normaliza la explicación (`translate` sobre `áéíóúüñ` en ambas cajas, después `lower`) y rechaza las mismas 19 raíces que TypeScript. No se usa `unaccent` ni ninguna extensión nueva. Una explicación con vocabulario clínico hace fallar la RPC **antes** del `INSERT`; nunca se recorta ni se reescribe para aceptarla.
+
+La paridad entre ambas listas está cubierta por una prueba automatizada que compara la constante exportada de TypeScript contra el texto del SQL.
+
+### Permisos de la RPC cerrados explícitamente
+
+PostgreSQL concede `EXECUTE` a `PUBLIC` por defecto al crear una función, lo que en una `SECURITY DEFINER` es especialmente delicado. `0004` ahora revoca de `PUBLIC` y de `anon` en sentencias separadas con la firma completa, y concede `EXECUTE` únicamente a `authenticated`. La función de validación queda sin ejecución para ningún rol de la API: solo la usa la RPC, que corre con los privilegios de su propietario.
+
+Se conserva sin cambios: identidad exclusivamente desde `auth.uid()`, ausencia de parámetro de usuario, `search_path = pg_catalog`, escritura atómica de respuestas y perfil, rechazo de diagnóstico duplicado, y ningún permiso directo sobre `perfil_detectado`.
+
+### Rutas pendientes de consolidar: **13**
+
+Tres modificadas (`docs/PROGRESO.md`, `src/components/auth/VistaProtegida.tsx`, `tsconfig.json`) y diez sin seguimiento. El informe de F1-A1 dijo "12": fue un error aritmético, no una ruta ausente — 10 creados + 3 modificados son 13.
+
+### Evidencia local
+
+- `node --test src/lib/auth/contrato.test.mjs`: **96/96**.
+- `node --test src/lib/diagnostico/contrato.test.mjs`: **62/62** (46 previas + 16 nuevas).
+- `npm run lint`, `npm run build`: exitosos, con `noEmit` y `allowImportingTsExtensions` activos.
+- Migraciones `0001`, `0002` y `0003`: hashes SHA-256 sin cambio.
+
+### Límite explícito de esta corrección
+
+Las pruebas que verifican los permisos y la estructura de `0004` **leen el texto del archivo**: comprueban arquitectura SQL **todavía no ejecutada**. No demuestran el comportamiento real de la RPC ni de los `GRANT`/`REVOKE` en PostgreSQL. Esa comprobación corresponde a F1-A2, después de aplicar la migración.
+
+---
+
+## Día 3 — F1-A1R2: normalización canónica de la barrera clínica (7 de agosto de 2026)
+
+**Estado: Día 3 sigue EN PROGRESO. `0004` continúa SIN APLICARSE. No hay llamada real a Gemini ni persistencia remota comprobada.**
+
+Corrección local. Rama `feature/dia3-diagnostico-gemini`, sin commit ni push. **13 rutas pendientes**, sin cambio.
+
+### Hallazgo corregido: la paridad TypeScript/SQL era aparente, no real
+
+F1-A1R dio por equiparadas ambas capas, pero usaban algoritmos distintos. SQL sustituía vocales acentuadas **precompuestas** con `translate()`; TypeScript descomponía en NFD y eliminaba las marcas combinantes.
+
+La diferencia importa: la cadena `"diagno" + U+0301 + "stico cli" + U+0301 + "nico"` **se ve idéntica** a "diagnóstico clínico", pero `translate()` no elimina esa marca combinante, así que la raíz no coincidía y PostgreSQL aceptaba el perfil. TypeScript sí lo detectaba. Como `authenticated` puede invocar la RPC directamente, era un atajo efectivo alrededor de la barrera SQL.
+
+### Normalización canónica común
+
+Ambas capas reducen ahora el texto a la misma forma antes de comparar: **NFD → minúsculas → solo `a-z0-9`**.
+
+| | Implementación |
+|---|---|
+| TypeScript | `texto.normalize('NFD').toLowerCase().replace(/[^a-z0-9]/g, '')` |
+| PostgreSQL | `regexp_replace(lower(normalize(texto, NFD)), '[^a-z0-9]', '', 'g')` |
+
+La misma transformación se aplica **también a cada raíz**, de modo que las de varias palabras pierden sus espacios igual que el texto.
+
+Además de las tildes descompuestas, esto cierra los separadores evasivos (`T.D.A.H.` → `tdah`, `diag-nóstico` → `diagnostico`) y los espacios irregulares (`déficit  de atención` → `deficitdeatencion`).
+
+Sin extensiones: `normalize()` y `regexp_replace()` son nativas de PostgreSQL (`normalize` desde la versión 13). No se usa `unaccent`. La eliminación de tildes no depende de la configuración regional.
+
+Se conservan intactos: las 19 raíces, los estilos y niveles permitidos, los `REVOKE`/`GRANT` aprobados, `SECURITY DEFINER`, `search_path` endurecido, identidad desde `auth.uid()`, ausencia de `usuario_id` y de `service_role`, persistencia atómica y rechazo de duplicados.
+
+**La explicación que se persiste nunca se modifica**: la forma canónica existe solo dentro de la comparación. Verificado por prueba.
+
+### Evidencia local
+
+- `node --test src/lib/auth/contrato.test.mjs`: **96/96**.
+- `node --test src/lib/diagnostico/contrato.test.mjs`: **73/73** (62 previas + 11 nuevas).
+- `npm run lint`, `npm run build`: exitosos.
+- Migraciones `0001`, `0002` y `0003`: hashes SHA-256 sin cambio. El de `0004` cambia, como corresponde a una propuesta local reparada.
+
+### Requisito añadido para F1-A2
+
+Confirmar que **`server_encoding` es `UTF8`** antes de aplicar `0004`: `normalize()` exige esa codificación.

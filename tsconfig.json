@@ -11,6 +11,12 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
+    // Permite escribir la extension ".ts" en los imports internos. Es
+    // necesario para que las pruebas de "node --test" puedan cargar los
+    // modulos reales: el resolvedor ESM de Node exige la extension y no
+    // conoce el alias "@/". Requiere noEmit (ya activo) y no cambia la
+    // salida del build.
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "incremental": true,
     "plugins": [
