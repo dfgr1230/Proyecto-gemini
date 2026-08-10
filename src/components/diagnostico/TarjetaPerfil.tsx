@@ -48,9 +48,18 @@ export default function TarjetaPerfil({ perfil }: { perfil: PerfilDetectado }) {
         a medida que practiques.
       </p>
 
+      {/* Accion principal: el perfil no es el final del recorrido, es lo
+          que decide la actividad siguiente. */}
+      <Link
+        href="/actividad"
+        className="mt-6 flex h-12 w-full items-center justify-center rounded-full bg-foreground text-base font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
+      >
+        Iniciar actividad
+      </Link>
+
       <Link
         href="/"
-        className="mt-6 inline-flex h-11 items-center justify-center rounded-full bg-foreground px-5 text-sm font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
+        className="mt-3 flex h-11 w-full items-center justify-center rounded-full border border-black/[.08] px-5 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-50 dark:border-white/[.145] dark:text-zinc-200 dark:hover:bg-zinc-900"
       >
         Volver al inicio
       </Link>

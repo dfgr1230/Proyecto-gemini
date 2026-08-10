@@ -624,3 +624,55 @@ Verificado en vivo: recarga dura, y cierre de sesión con nuevo inicio de sesió
 ### Pendiente
 
 Actividad adaptativa, registro de intentos y despliegue. Las pruebas negativas de la RPC siguen aplazadas hasta después de la entrega.
+
+---
+
+## Sprint B — Actividad adaptativa mínima e intento persistido (10 de agosto de 2026)
+
+Ruta nueva `/actividad`, protegida por sesión y por perfil: sin perfil redirige a `/diagnostico`, porque sin nivel de partida la parte adaptativa sería inventada.
+
+### Qué decide cada capa
+
+El reparto es deliberado y conviene no difuminarlo en la narrativa del jurado:
+
+| Decisión | Quién la toma |
+|---|---|
+| Estilo y nivel inicial | **Gemini**, en el perfil del diagnóstico |
+| Qué ejercicio se presenta | Selección determinista sobre ese nivel |
+| Si la respuesta es correcta | **PostgreSQL**, dentro de `registrar_intento()` |
+| Qué nivel se recomienda después | Regla determinista sobre nivel y resultado |
+
+La interfaz dice exactamente eso. **No se afirma que Gemini haya creado el ejercicio**: generó el perfil que orienta la selección.
+
+### Selección
+
+Se elige el ejercicio del nivel más cercano al sugerido. Ante empate de distancia se prefiere el **nivel más bajo**: empezar por lo más fácil permite avanzar, mientras que empezar por lo más difícil puede frenar en seco a quien acaba de llegar. Segundo desempate por `id`, para que una demo sea reproducible.
+
+Con el banco actual (un ejercicio de nivel 1) y un perfil de nivel 1, la coincidencia es exacta.
+
+### La respuesta correcta no puede llegar al navegador
+
+Comprobado contra el proyecto remoto: `GET /rest/v1/ejercicios_respuestas` con la sesión de un usuario autenticado devuelve **403**. La tabla tiene RLS activo sin ninguna policy, así que la garantía es del esquema, no del cuidado del cliente.
+
+Sobre eso se añade una barrera redundante: `validarEjercicio()` descarta cualquier ejercicio cuyo `contenido` público incluya una clave como `respuesta_correcta` o `solucion`. Si alguien sembrara un ejercicio mal formado, se descarta en vez de filtrarlo.
+
+### El veredicto no se calcula en el cliente
+
+A la RPC solo viajan `p_ejercicio_id`, `p_respuesta_dada` y `p_tiempo_respuesta`. No se envía `correcto` ni `usuario_id`: lo primero lo decide la base comparando contra `ejercicios_respuestas`, lo segundo sale de `auth.uid()` dentro de la función. Hay una prueba estática que falla si alguna de esas claves aparece en la llamada.
+
+Doble envío bloqueado por guardia de estado (`if (estado !== 'respondiendo') return`) y por el botón deshabilitado mientras la petición está en vuelo.
+
+### Progreso sin columnas nuevas
+
+La recomendación se reconstruye cruzando `intentos.ejercicio_id` con el banco: el nivel realizado sale de ahí, no de un valor derivado y guardado. Por eso sobrevive a una recarga **sin migración alguna**.
+
+Regla: acierto sube un nivel, fallo baja uno, acotado a 1–5; en un límite se indica explícitamente que el nivel se mantiene. Si el intento apunta a un ejercicio que ya no está en el banco, no se inventa un nivel: se cae al del perfil.
+
+Al recargar con un intento ya registrado se muestra el resultado, nunca el formulario — así una recarga no puede crear un segundo intento.
+
+### Evidencia
+
+- `src/lib/actividad/contrato.test.mjs`: **28/28**.
+- Suite completa: **310/310**.
+- `npm run lint` y `npm run build`: exitosos. `/actividad` en el manifiesto de rutas.
+- Sin migraciones, sin SQL manual, sin ampliar el banco de ejercicios.
