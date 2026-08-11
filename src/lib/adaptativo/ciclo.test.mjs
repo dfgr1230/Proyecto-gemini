@@ -802,6 +802,72 @@ test('[ESTATICA] el privilegio se limita a una sola llamada RPC', () => {
   ]);
 });
 
+test('[ESTATICA] el identificador del intento nunca llega del navegador', () => {
+  // La credencial privilegiada omite RLS, asi que toda la autorizacion
+  // tiene que haber ocurrido ANTES. Si el navegador pudiera indicar el
+  // intento, elegiria a quien pertenece el analisis.
+  const ruta = leer(RUTA_CICLO);
+  assert.ok(!/c\.intento_id|intento_id:\s*c\./.test(ruta), 'la ruta no debe leer intento_id del cuerpo');
+  // Solo tres campos entran desde la peticion.
+  assert.ok(ruta.includes('ejercicioId: c.ejercicio_id'));
+  assert.ok(ruta.includes('respuestaDada: c.respuesta_dada'));
+  assert.ok(ruta.includes('tiempoRespuesta: normalizarTiempo(c.tiempo_respuesta)'));
+
+  const orquestador = leer(RUTA_ORQUESTADOR);
+  assert.ok(!/entrada\.intentoId/.test(orquestador));
+  // El id sale de la RPC recien ejecutada, o del historial que RLS
+  // restringe al propio usuario. No hay una tercera via.
+  assert.ok(orquestador.includes('id: registro.id'));
+  assert.ok(orquestador.includes('id: duplicado.intento.id'));
+
+  // Y la verificacion de sesion precede al USO de la credencial. Se busca
+  // el punto de llamada, no el import: el import vive arriba del archivo
+  // y compararlo daria un falso negativo.
+  const posSesion = ruta.indexOf("if (usuario.estado === 'sin_sesion')");
+  const posPrivilegio = ruta.indexOf('conservarAnalisis: (parametros');
+  assert.ok(posSesion > 0, 'la ruta debe verificar la sesion');
+  assert.ok(posPrivilegio > posSesion, 'la sesion debe verificarse antes de usar la credencial');
+  // El cliente privilegiado se construye dentro de la llamada, no en el
+  // ambito del modulo: no existe antes de que haya sesion verificada.
+  assert.ok(leer(RUTA_PRIVILEGIADO).includes('const cliente = createClient('));
+  assert.ok(!/^const cliente = createClient\(/m.test(leer(RUTA_PRIVILEGIADO)));
+});
+
+test('un intento ajeno no puede reutilizarse como propio', async () => {
+  // El historial que llega al ciclo esta restringido por RLS, asi que un
+  // intento de otra persona no aparece. Si apareciera, detectarIntento-
+  // Duplicado lo tomaria por propio y el analisis acabaria colgando de
+  // evidencia ajena. Se comprueba con un intento de otro usuario sembrado
+  // en la base falsa.
+  const base = crearBaseFalsa({
+    usuario: 'u1',
+    intentos: [
+      {
+        id: 'ajeno-1',
+        usuario_id: 'u2',
+        ejercicio_id: 'e1',
+        respuesta_dada: 'A',
+        correcto: true,
+        tiempo_respuesta: 5,
+        fecha: '2026-08-11T00:00:00.000Z',
+      },
+    ],
+  });
+
+  const r = await ejecutarCicloAdaptativo(
+    { ejercicioId: 'e1', respuestaDada: 'A', tiempoRespuesta: 5 },
+    dependencias(base, crearGeminiFalso())
+  );
+
+  assert.equal(r.estado, 'ok');
+  assert.equal(r.intento.reutilizado, false, 'no puede tomar por propio un intento ajeno');
+  assert.notEqual(r.intento.id, 'ajeno-1');
+  assert.equal(base.llamadasRegistrar, 1, 'debe registrar uno nuevo a su nombre');
+  // Y el analisis queda ligado al intento propio, no al ajeno.
+  assert.equal(base.analisis[0].intento_id, r.intento.id);
+  assert.equal(base.analisis[0].usuario_id, 'u1');
+});
+
 test('[ESTATICA] la falta de credencial es un estado declarado, no un exito', () => {
   const fuente = leer(RUTA_PRIVILEGIADO);
   assert.ok(fuente.includes('CODIGO_CREDENCIAL_AUSENTE'));
