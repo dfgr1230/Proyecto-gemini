@@ -163,6 +163,14 @@ export interface IntentoRegistrado {
   ejercicio_id: string;
   correcto: boolean;
   fecha: string;
+  // Opcional y añadido en el ciclo adaptativo (Dia 3): la columna existe
+  // en public.intentos desde 0001, pero /actividad no la pedia porque no
+  // la necesitaba. El ciclo si la usa como evidencia, y declararla
+  // opcional evita tocar las consultas que no la seleccionan.
+  tiempo_respuesta?: number | null;
+  // Igual que la anterior: existe en public.intentos desde 0001 y el
+  // ciclo adaptativo la necesita para detectar reintentos identicos.
+  respuesta_dada?: string | null;
 }
 
 export interface Progreso {

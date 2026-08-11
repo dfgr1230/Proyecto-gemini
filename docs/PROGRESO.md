@@ -10,9 +10,9 @@ Este archivo se actualiza al cierre de cada día de trabajo. Refleja el estado r
 |---|---|
 | **Día 1 — Cimientos** | ✅ 100% completado |
 | **Día 2 — Datos y login** | ✅ 100% completado — cerrado el 7 de agosto de 2026. Checkpoints 2, 3, 4 y 5 aprobados con evidencia real; Checkpoint 6 (6A local + 6B funcional remoto) APROBADO Y CERRADO. Ver la sección "Checkpoint 6" para el alcance validado y sus limitaciones |
-| Día 3 — Test de diagnóstico | 🟨 En progreso — recorrido local implementado y validado (F1-A1), endurecido en F1-A1R y F1-A1R2. Pendiente: aplicar `0004` y ejecutar una llamada real a Gemini (compuerta F1-A2) |
-| Día 4 — Conectar la IA | ⬜ Pendiente |
-| Día 5 — Ciclo adaptativo | ⬜ Pendiente |
+| Día 3 — Test de diagnóstico | ✅ Completado — `0004` aplicada, llamada real a Gemini y perfil persistido (Sprint A) |
+| Día 4 — Conectar la IA | ✅ Completado — Gemini opera de verdad en `/api/perfil` y en `/api/adaptar` |
+| Día 5 — Ciclo adaptativo | 🟨 Implementado y probado con Gemini real; **bloqueado en remoto**: falta el almacén del perfil versionado (ver "Sprint C") |
 | Día 6 — Pulido + prueba real | ⬜ Pendiente |
 | Día 7 — Cierre | ⬜ Pendiente |
 
@@ -676,3 +676,205 @@ Al recargar con un intento ya registrado se muestra el resultado, nunca el formu
 - Suite completa: **310/310**.
 - `npm run lint` y `npm run build`: exitosos. `/actividad` en el manifiesto de rutas.
 - Sin migraciones, sin SQL manual, sin ampliar el banco de ejercicios.
+
+---
+
+## Sprint C — Ciclo adaptativo completo con Gemini como motor de decisión (11 de agosto de 2026)
+
+**Estado: implementado y probado con Gemini real de extremo a extremo contra un doble de base de datos. NO demostrado contra Supabase remoto: falta un almacén donde conservar el perfil versionado, y aplicarlo exige una intervención manual que esta tarea tenía prohibido ejecutar.**
+
+### Corrección del estado de partida
+
+La orden de trabajo describía `0004` como pendiente de aplicar. **Ese estado ya estaba superado.** Comprobado por sondeo de solo lectura contra PostgREST con la clave publicable: `guardar_diagnostico_con_perfil(jsonb, jsonb)` y `registrar_intento(uuid, text, int)` devuelven `42501 permission denied` —error que solo se produce sobre objetos que existen—, mientras que cualquier nombre inventado devuelve `PGRST202`. Las cinco tablas de `0001` responden igual.
+
+**El registro en el historial se comprobó después, por separado y con evidencia directa.** `supabase migration list --linked` (Supabase CLI v2.98.1, solo lectura) devuelve `0001`–`0004` alineadas en Local y Remote. El historial remoto está sano y continuo.
+
+La distinción sigue importando —la existencia de objetos no demuestra el registro en el historial, y son comprobaciones distintas— pero aquí se cumplen ambas y cada una tiene su evidencia. Ver `docs/plan-smoke-dia3-remoto.md` §0.
+
+No se tocó `0004`, no se reparó su historial, no se ejecutó `db push` ni `db reset`, y **no se creó ninguna migración nueva**: `supabase/migrations/` sigue conteniendo exactamente `0001`–`0004`, verificado por una prueba automatizada.
+
+### Qué decide cada capa, ahora
+
+| Decisión | Quién la toma |
+|---|---|
+| Estilo y nivel inicial | **Gemini**, en el perfil del diagnóstico |
+| Si la respuesta es correcta | **PostgreSQL**, dentro de `registrar_intento()` |
+| Fortalezas, dificultades, habilidad prioritaria | **Gemini**, tras cada respuesta |
+| Nivel recomendado y apoyo pedagógico | **Gemini**, tras cada respuesta |
+| Materia y enfoque de la siguiente actividad | **Gemini**, tras cada respuesta |
+| Qué ejercicio concreto encaja con esa recomendación | Búsqueda determinista en el banco |
+
+La diferencia con el Sprint B es el corazón del día: allí el próximo nivel salía de una regla fija (`acierto sube, fallo baja`). Aquí sale del análisis de Gemini sobre el perfil, el historial y la evidencia nueva. `/actividad` **conserva sin cambios** el comportamiento del Sprint B; el ciclo vive en una ruta nueva, `/ciclo`.
+
+### El ciclo, paso a paso
+
+`POST /api/adaptar` recibe una respuesta y ejecuta, en este orden:
+
+1. verifica la identidad contra el servidor de Auth (`getUser(token)`), nunca decodificando el token localmente;
+2. lee el perfil vigente y —restringidos por RLS— el banco y el historial de intentos;
+3. registra el intento con `registrar_intento()`, **antes** del análisis;
+4. construye el contexto: perfil base + análisis previo + historial + evidencia nueva;
+5. llama a Gemini con salida estructurada y valida la respuesta contra un contrato de nueve claves;
+6. conserva el análisis ligado al `intento_id` que lo originó;
+7. elige la siguiente actividad con la recomendación;
+8. devuelve el análisis, el análisis anterior y la siguiente actividad.
+
+**Por qué el intento se persiste ANTES del análisis**, al revés que en `/api/perfil`: allí persistir antes gastaría el único diagnóstico que el esquema admite por usuario. Aquí no hay nada equivalente que gastar, y perder la respuesta del estudiante porque el proveedor tuvo un mal minuto sería mucho peor —las respuestas y calificaciones originales son la fuente de verdad.
+
+### Un análisis a medias no es un análisis
+
+El contrato exige las nueve claves exactas, sin ninguna de más: `fortalezas`, `dificultades`, `habilidad_prioritaria`, `nivel_recomendado`, `apoyo_pedagogico`, `siguiente_actividad_materia`, `siguiente_actividad_enfoque`, `justificacion`, `confianza`. Si falta una sola, o sobra una, o un nivel se sale de 1–5, o aparece vocabulario clínico en **cualquiera** de los textos, el análisis se rechaza entero: no se completa con valores por defecto, no se recorta y no se persiste.
+
+La barrera clínica reutiliza las 19 raíces y la normalización canónica del diagnóstico (`NFD → minúsculas → solo a-z0-9`), en vez de duplicar la lista. Dos listas que puedan divergir serían peor que una.
+
+`confianza` es cualitativa (`baja`/`media`/`alta`) y no un porcentaje: una cifra como «87 %» aparenta una precisión que un modelo no puede sustentar sobre uno o dos intentos, y tanto el jurado como el estudiante la leerían como una medida real.
+
+### Privacidad del contexto
+
+A Gemini viajan únicamente materia, nivel, acierto, segundos y orden de los intentos, más el estilo y el nivel del perfil. **Nunca** el nombre, el correo, el UUID del usuario, el id del diagnóstico, los identificadores de ejercicio ni las fechas absolutas. Hay una prueba que serializa el contexto y el prompt y falla si aparece cualquiera de esos campos.
+
+### La adaptación no se finge nunca
+
+- Si Gemini falla, la respuesta HTTP dice que el intento **sí** quedó registrado y la interfaz lo muestra tal cual. No se inventa una recomendación de reserva presentada como decisión de la IA.
+- Si el análisis no se puede conservar, la interfaz lo dice explícitamente en vez de mostrar «guardado».
+- Se distingue `almacen_no_disponible` de `no_conservado`: lo primero es una carencia conocida de infraestructura, lo segundo un fallo. Colapsarlos haría parecer roto algo que simplemente no está instalado.
+
+### Prevención de duplicados con lo que el esquema ya da
+
+`public.intentos` no tiene ninguna restricción UNIQUE y crearla exigiría una migración. La prevención se apoya en lo que sí existe: la policy `intentos_select_propio` permite releer el historial antes de escribir. Si ya hay un intento sobre el **mismo ejercicio con la misma respuesta**, se reutiliza en vez de crear otra fila; una respuesta distinta sí es evidencia nueva y sí se registra. La comparación normaliza igual que `registrar_intento()` (recorte e insensible a mayúsculas).
+
+**Límite explícito**: esto no es una garantía transaccional. Dos peticiones verdaderamente simultáneas podrían pasar ambas la lectura antes de que ninguna escriba. Cerrar esa ventana requiere un índice único, que forma parte del paso manual pendiente.
+
+### Evidencia
+
+**Probado localmente** — suite completa **367/367** (310 previas sin regresión + 57 nuevas), `npx tsc --noEmit`, `npm run lint` y `npm run build` exitosos. `/ciclo` y `/api/adaptar` aparecen en el manifiesto de rutas.
+
+**Probado con Gemini real** — dos iteraciones consecutivas ejecutadas contra `gemini-3.6-flash` con la clave real, con la base de datos sustituida por un doble en memoria:
+
+| | Iteración 1 | Iteración 2 |
+|---|---|---|
+| Respuesta | acierta nivel 1 | falla nivel 2 |
+| Veredicto | lo da la RPC | lo da la RPC |
+| Análisis previo en el contexto | ninguno | el de la iteración 1 |
+| `nivel_recomendado` | **2** | **1** |
+| Duración de la llamada | 4,9 s | 11,5 s |
+| `finishReason` | STOP | STOP |
+
+La justificación de la segunda iteración citó literalmente la primera: *«En el análisis anterior tenías nivel recomendado 2 sin dificultades observadas; ahora se registra un fallo en nivel 2, por lo que se ajusta el nivel a 1 para consolidar conocimientos antes de avanzar.»* Un reintento idéntico posterior devolvió `reutilizado = true` sin crear una segunda fila.
+
+**Probado a nivel HTTP** — con el servidor de desarrollo real, `POST /api/adaptar` sin token y con token inválido devuelve `401 sin_sesion`; `GET /ciclo` devuelve 200.
+
+**Clave fuera del navegador** — recorridos los 33 archivos de `.next/static` del build de producción: cero coincidencias de la clave, del nombre `GEMINI_API_KEY`, del endpoint de Gemini y del texto de la instrucción.
+
+**No demostrado**: el ciclo NO se ha ejecutado contra Supabase remoto, y por tanto no hay todavía una demostración de extremo a extremo con un estudiante real.
+
+### Bloqueo remoto y paso manual pendiente
+
+Dos carencias del proyecto remoto impiden la demostración de extremo a extremo, y ninguna se puede resolver sin intervención manual:
+
+1. **No existe dónde conservar el perfil versionado.** `diagnosticos.usuario_id` es UNIQUE, no hay policy de UPDATE ni de DELETE y `guardar_diagnostico_con_perfil()` rechaza expresamente un segundo diagnóstico; `usuarios` solo concede `update (nombre)`; `intentos` solo se escribe vía RPC sin campos libres. No es una limitación de la aplicación: no existe el sitio.
+2. **El banco tiene un solo ejercicio** (la semilla técnica de `0002`). Con uno solo, la segunda iteración no tiene ninguna actividad pendiente que presentar.
+
+El texto exacto de lo que hace falta vive en `docs/`, **no** en `supabase/migrations/`, y en **dos archivos separados** (una migración no puede aplicarse a medias, así que estructura y contenido pedagógico no pueden compartir transacción):
+
+| Borrador | Contiene |
+|---|---|
+| `docs/borrador-0005-dia3-analisis-adaptativos.sql` | `es_analisis_adaptativo_valido()`, `es_metadatos_analisis_valido()`, tabla `analisis_adaptativos` (columna `version` IDENTITY, `unique (intento_id)` con nombre explícito, RLS activo y **ninguna** policy de escritura), índice `(usuario_id, version desc)`, permisos de tabla, secuencia y funciones, y la RPC `guardar_analisis_adaptativo()` |
+| `docs/borrador-0006-dia3-ampliar-banco.sql` | únicamente los cuatro ejercicios y sus respuestas oficiales, con verificación del `contenido` completo |
+
+El procedimiento de aplicación, las consultas de verificación del esquema, el tratamiento del historial de migraciones y el smoke test autenticado están en **`docs/plan-smoke-dia3-remoto.md`**, también sin ejecutar.
+
+Ninguno de los tres archivos se ha ejecutado, y requieren autorización expresa. Sus propiedades estructurales están cubiertas por **veinte** comprobaciones `[ESTATICA]`, con el mismo límite que se aceptó para `0004` antes de aplicarla: **leen el texto del archivo, no demuestran el comportamiento real en PostgreSQL**.
+
+### Auditoría posterior de los borradores (11 de agosto de 2026)
+
+Revisión completa de la propuesta contra `0001`–`0004`, el esquema remoto conocido, los tipos de TypeScript, `/api/adaptar` y las pruebas. Hallazgos corregidos, todos en archivos locales:
+
+- **La RPC no era idempotente bajo concurrencia.** Comprobar-y-luego-insertar deja una ventana en la que dos peticiones simultáneas pasan ambas la comprobación y la segunda muere con `23505`, que la aplicación habría interpretado como «no conservado» pese a estar conservado. Ahora usa `on conflict … do nothing` + relectura, y declara en voz alta la ventana residual que ni siquiera eso cierra.
+- **El orden de «último análisis» no era determinista.** `fecha` usa `now()`, que devuelve el inicio de la transacción: dos filas pueden empatar. Se añadió la columna `version` (IDENTITY) y `/api/adaptar` ordena por ella.
+- **`p_metadatos` aceptaba JSON arbitrario del cliente.** Se añadió `es_metadatos_analisis_valido()` y su CHECK.
+- **La barrera clínica concatenaba los textos**, y la normalización borra los espacios: dos campos contiguos podían formar una raíz que ninguno contiene. Ahora se comprueba campo por campo, igual que TypeScript.
+- **`create table if not exists` daba idempotencia falsa**: habría aceptado una tabla preexistente sin los CHECK ni la restricción única. Sustituido por `create table`.
+- **La secuencia implícita de la columna IDENTITY quedaba sin `revoke`**, pese a que los privilegios por defecto de Supabase pueden abrirla.
+- **`usuario_id` podía discrepar del dueño del intento.** Ahora se toma de la propia fila del intento, y esa fila solo se encuentra si pertenece a `auth.uid()`.
+- **Riesgo de repetir el error `42702` de `0003`**: los parámetros de salida se renombraron a `analisis_id` / `analisis_version` / `creado_en`, distintos de las columnas `id` / `version` / `fecha`.
+- **La verificación del banco solo comparaba materia y nivel**, justo lo que no basta para detectar otro ejercicio en el mismo UUID. Ahora compara el `contenido` completo.
+- **Las cuatro respuestas oficiales eran todas «A»**: con un banco pequeño, cualquiera acertaría sin resolver y las métricas de la prueba con usuarios reales no significarían nada. Ahora varían.
+
+### Corrección del riesgo de procedencia (11 de agosto de 2026)
+
+El riesgo que la auditoría anterior declaró como «residual y no cerrable por SQL» —que un usuario autenticado colgara de su propio intento un JSON con la forma correcta que Gemini nunca produjo— **sí era cerrable**, y se cerró. Declararlo aceptable era la respuesta cómoda, no la correcta: el ciclo entero se presenta al jurado como «esto lo decidió Gemini», y esa afirmación no puede depender de que nadie abra la consola del navegador.
+
+**Qué cambió.** La RPC `guardar_analisis_adaptativo()` deja de estar concedida a `anon` y a `authenticated`. Solo la ejecuta el servidor, con una credencial exclusiva de servidor. El único camino hacia la tabla es `/api/adaptar`, después de verificar la sesión contra el servidor de Auth y después de que Gemini haya devuelto una respuesta real y validada.
+
+**Qué no cambió, y es lo importante:**
+
+- La identidad **no** se relajó. Bajo la credencial de servidor `auth.uid()` es nulo, así que `usuario_id` ya no puede salir de ahí: sale de la **fila del intento**, que solo pudo crear `registrar_intento()` ejecutándose con el token del propio estudiante. Sigue siendo imposible sustituirlo desde un parámetro o desde el JSON.
+- Las respuestas y calificaciones originales **siguen siendo la fuente de verdad** y se siguen escribiendo con la identidad del estudiante, bajo RLS. La credencial de servidor no toca `intentos`, `diagnosticos` ni `ejercicios`.
+- El backend **no** recibe permisos más amplios de los necesarios: `0005` retira a `service_role` la escritura directa sobre la tabla, de modo que ni con esa clave se pueden insertar filas saltándose la validación, la unicidad por intento o la derivación de `usuario_id`.
+
+**Metadatos obligatorios.** La columna pasa a `not null`: son la única evidencia estructurada de que hubo una llamada real. Sin ellos el ciclo no persiste y lo declara.
+
+**Credencial: diseñada, no creada.** Variable `SUPABASE_SECRET_KEY` (sin `NEXT_PUBLIC_`), declarada vacía en `.env.example`. `.env.local` no se tocó. Mientras esté vacía, el ciclo funciona y la interfaz avisa de que el análisis todavía no se conserva — el estado `credencial_ausente`, distinto de `almacen_no_disponible` y de `no_conservado` porque la acción correctiva es otra.
+
+**Riesgo residual que ahora sí es irreducible**: quien posea la credencial de servidor puede llamar a la RPC con cualquier intento existente. Eso no es un fallo del diseño — la credencial *es* la frontera de confianza, y quien la tiene ya administra el sistema.
+
+---
+
+## Sprint D — Aplicación remota de 0005 y 0006 (11 de agosto de 2026)
+
+**Estado: migraciones APLICADAS y REGISTRADAS en el proyecto remoto. El ciclo NO está demostrado de extremo a extremo todavía: falta la credencial de servidor y falta el smoke test.**
+
+### Qué se aplicó y cómo
+
+Por `supabase db push --linked` (CLI v2.98.1), una sola vez. **No** se usó el SQL Editor, ni `migration repair`, ni `db reset`. `db push` aplicó y registró ambas migraciones en el historial en la misma operación, que es justo lo que evita el desfase que habría dejado el SQL Editor.
+
+| Archivo | SHA-256 |
+|---|---|
+| `supabase/migrations/0005_dia3_analisis_adaptativos.sql` | `71A3B8FDD5FAE79EA0A32F43BBC1DB2EEEAC157011B702CD49DB106CE8C7226A` |
+| `supabase/migrations/0006_dia3_ampliar_banco.sql` | `2D54D84FB7483F437E7378F89E0E863E790103E923C1EC277B8AE14FFE7584D1` |
+
+Al promover los borradores auditados solo cambió el bloque de cabecera. El cuerpo ejecutable (todas las líneas que no son comentario ni línea vacía) es idéntico antes y después, comprobado por huella propia: `841AE07…CA89B` para 0005 (246 líneas) y `9744A88…5C432` para 0006 (132 líneas).
+
+`0001`–`0004` conservan sus hashes, ahora verificado por una prueba automatizada y no solo por inspección.
+
+### Historial final
+
+```
+   Local | Remote | Time (UTC)
+  -------|--------|------------
+   0001  | 0001   | 0001
+   0002  | 0002   | 0002
+   0003  | 0003   | 0003
+   0004  | 0004   | 0004
+   0005  | 0005   | 0005
+   0006  | 0006   | 0006
+```
+
+### Lo que quedó comprobado contra el remoto
+
+Con el rol `anon` vía PostgREST (lecturas y llamadas que deben fallar):
+
+| Comprobación | Resultado |
+|---|---|
+| `analisis_adaptativos` existe | **Sí** — devuelve `42501`, no `PGRST205`. Antes de la migración devolvía `PGRST205` |
+| `anon` puede leer la tabla | **No** — `42501` |
+| `anon` puede ejecutar `guardar_analisis_adaptativo` | **No** — `42501` |
+| `anon` puede ejecutar las dos funciones de validación | **No** — `42501` en ambas |
+| `registrar_intento` sigue accesible como antes | Sin cambio — `42501` para `anon`, igual que siempre |
+
+### Lo que NO está comprobado y por qué
+
+`supabase db dump` requiere Docker, que no está disponible en esta máquina, y el SQL Editor está prohibido para esta tarea. Sin una sesión autenticada ni la clave secreta, estas comprobaciones quedan pendientes del smoke test:
+
+- que `authenticated` **no** tenga `EXECUTE` sobre la RPC (requiere un JWT de usuario);
+- que `service_role` **sí** lo tenga y **no** tenga `INSERT` directo (requiere la clave secreta);
+- RLS activo y aislamiento de lectura entre usuarios;
+- `metadatos` obligatorio, unicidad por `intento_id`, idempotencia de la RPC, rechazo de intento inexistente y de JSON inválido;
+- que el banco tenga exactamente los cuatro ejercicios nuevos.
+
+Todas están escritas y listas en `docs/plan-smoke-dia3-remoto.md`. Ninguna se ha ejecutado.
+
+### Bloqueo actual
+
+`SUPABASE_SECRET_KEY` no existe todavía. Hasta que Danny la cree y la configure, `/api/adaptar` funciona y devuelve `conservacion: 'credencial_ausente'`: el intento se registra, Gemini analiza, y la interfaz avisa de que el análisis aún no se conserva. **No hay ninguna fila en `analisis_adaptativos`.**

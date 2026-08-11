@@ -49,10 +49,21 @@ export default function TarjetaPerfil({ perfil }: { perfil: PerfilDetectado }) {
       </p>
 
       {/* Accion principal: el perfil no es el final del recorrido, es lo
-          que decide la actividad siguiente. */}
+          que decide la actividad siguiente.
+          Se anaden DOS destinos porque son recorridos distintos y ambos
+          siguen vigentes: /ciclo ejecuta el ciclo adaptativo completo con
+          analisis de Gemini tras cada respuesta; /actividad conserva sin
+          cambios la actividad unica con seleccion determinista. */}
+      <Link
+        href="/ciclo"
+        className="mt-6 flex h-12 w-full items-center justify-center rounded-full bg-foreground text-base font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
+      >
+        Iniciar ciclo adaptativo
+      </Link>
+
       <Link
         href="/actividad"
-        className="mt-6 flex h-12 w-full items-center justify-center rounded-full bg-foreground text-base font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
+        className="mt-3 flex h-11 w-full items-center justify-center rounded-full border border-black/[.08] px-5 text-sm font-medium text-zinc-800 transition-colors hover:bg-zinc-50 dark:border-white/[.145] dark:text-zinc-200 dark:hover:bg-zinc-900"
       >
         Iniciar actividad
       </Link>

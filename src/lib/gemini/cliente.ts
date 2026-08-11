@@ -54,8 +54,23 @@ export interface PeticionGemini {
   esquema: EsquemaRespuesta;
 }
 
+// Metadatos de la llamada. Existen para poder DEMOSTRAR que hubo una
+// llamada real al proveedor -- requisito de la convocatoria: el jurado
+// debe poder distinguir una decision de IA de una regla escrita a mano.
+//
+// Deliberadamente NO contienen: la clave, la URL, las cabeceras, el
+// prompt, la respuesta del estudiante ni el texto generado. Solo el
+// modelo consultado, cuanto tardo, por que termino y el tamano de la
+// respuesta -- todo ello no sensible y suficiente como evidencia.
+export interface MetadatosLlamada {
+  modelo: string;
+  duracion_ms: number;
+  motivo_finalizacion: string | null;
+  caracteres_respuesta: number;
+}
+
 export type ResultadoGemini =
-  | { estado: 'ok'; texto: string }
+  | { estado: 'ok'; texto: string; metadatos: MetadatosLlamada }
   | { estado: 'error'; categoria: 'configuracion' | 'red' | 'proveedor' | 'respuesta_vacia' };
 
 // --- Diagnostico de servidor -------------------------------------------
@@ -153,6 +168,8 @@ export async function llamarGemini(peticion: PeticionGemini): Promise<ResultadoG
     },
   };
 
+  const comenzoEn = Date.now();
+
   let respuesta: Response;
   try {
     respuesta = await fetch(url, {
@@ -208,7 +225,16 @@ export async function llamarGemini(peticion: PeticionGemini): Promise<ResultadoG
     return { estado: 'error', categoria: 'respuesta_vacia' };
   }
 
-  return { estado: 'ok', texto };
+  return {
+    estado: 'ok',
+    texto,
+    metadatos: {
+      modelo,
+      duracion_ms: Date.now() - comenzoEn,
+      motivo_finalizacion: motivoDeFinalizacion(datos),
+      caracteres_respuesta: texto.length,
+    },
+  };
 }
 
 // Lee candidates[0].finishReason cuando existe. Es un enumerado cerrado
