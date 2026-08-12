@@ -878,3 +878,90 @@ Todas están escritas y listas en `docs/plan-smoke-dia3-remoto.md`. Ninguna se h
 ### Bloqueo actual
 
 `SUPABASE_SECRET_KEY` no existe todavía. Hasta que Danny la cree y la configure, `/api/adaptar` funciona y devuelve `conservacion: 'credencial_ausente'`: el intento se registra, Gemini analiza, y la interfaz avisa de que el análisis aún no se conserva. **No hay ninguna fila en `analisis_adaptativos`.**
+
+---
+
+## Cierre técnico del MVP — 12 de agosto de 2026 (Sprint E)
+
+**Estado: el MVP está completo, validado localmente y documentado. NO está desplegado.** Este bloque fue de validación, corrección mínima y documentación: sin commit, sin push, sin cambios en Vercel, sin despliegue y sin tocar la base de datos.
+
+### Superado del bloqueo anterior
+
+La entrada del Sprint D decía *«`SUPABASE_SECRET_KEY` no existe todavía… No hay ninguna fila en `analisis_adaptativos`»*. **Eso quedó superado.** La credencial existe y está configurada en el entorno local, y el ciclo se ejecutó de verdad contra Supabase remoto. La afirmación anterior se conserva arriba como trazabilidad de su fecha.
+
+**Aclaración de nomenclatura.** La entrada del Día 1 (y `docs/sesion-dia-1.md`) menciona `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Ese nombre quedó superado: el nombre real en el código, en `.env.example` y en Vercel es **`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`**. No se reescriben aquellas entradas, por el mismo criterio ya aplicado a las cabeceras de `0002` y `0003`: la aclaración de estado vive en el documento vivo, no dentro del registro histórico. `CLAUDE.md` no contiene ninguna referencia a nombres de variables de entorno, así que no requirió corrección.
+
+### A. Demostrado ANTES de este bloque (evidencia funcional real, no re-verificada hoy)
+
+- Registro, confirmación por correo, regreso a la aplicación e inicio de sesión.
+- Diagnóstico de **12 preguntas**.
+- `POST /api/perfil` con llamada **real** a Gemini, respuesta **200**, y `perfil_detectado` persistido con exactamente tres claves: `estilo_aprendizaje`, `explicacion`, `nivel_sugerido`.
+- Una cuenta limpia produjo perfil **lectoescritor, nivel 2**.
+- **Ciclo adaptativo funcionando de extremo a extremo** contra Supabase remoto:
+  - primera interacción — matemáticas nivel 2, respuesta correcta, análisis de Gemini conservado, recomendación de **nivel 3**;
+  - segunda interacción — matemáticas nivel 3, respuesta correcta, análisis conservado, **mantuvo nivel 3** y **cambió la siguiente materia a lenguaje**.
+- El segundo análisis usó explícitamente el análisis anterior y los dos intentos: el ciclo es acumulativo, no una lectura aislada.
+- Conteos conservados: `diagnosticos` **1**, `intentos` **2**, `analisis_adaptativos` **2**.
+- Banco de **cinco ejercicios**: matemáticas niveles 1, 2 y 3; lenguaje niveles 1 y 2.
+- Versiones de análisis observadas: **1 y 3**. **El hueco es normal y esperado**, no un fallo: `version` es una columna `IDENTITY`, que garantiza un orden determinista de asignación pero **no una numeración sin huecos**. El salto proviene de una prueba previa de idempotencia. El código ya lo documenta en `src/app/api/adaptar/route.ts`.
+- Ocho de doce controles remotos demostrados: 2, 3, 6, 7, 8, 9, 11 y 12.
+
+### B. Validado localmente EN este bloque (ejecutado hoy)
+
+| Validación | Resultado |
+|---|---|
+| `npx tsc --noEmit` | **exit 0** (~6 s) |
+| `npm run lint` | **exit 0** (~48 s) |
+| `node --test` sobre los 7 archivos de prueba | **389/389 aprobadas**, 0 fallidas (~1 s) |
+| `npm run build` | **exit 0** (~27 s) — `/ciclo` y `/api/adaptar` presentes en el manifiesto de rutas |
+| `git diff --check` | **exit 0** |
+
+Las 389 pruebas superan las 367 registradas en el Sprint C: el commit `11700de` añadió la cobertura de procedencia del intento y la fijación de hashes de migraciones.
+
+**Nota sobre los nombres de los archivos de prueba**: la orden de trabajo de este bloque los citaba como `src/lib/auth.test.mjs` y `src/lib/actividad.test.mjs`. Las rutas reales son `src/lib/auth/contrato.test.mjs` y `src/lib/actividad/contrato.test.mjs`. Se usaron las reales; los siete archivos son los correctos.
+
+### C. Corrección de código aplicada (una sola, mínima)
+
+**`src/components/ciclo/VistaCiclo.tsx` — el estado de error dejaba al usuario atrapado.**
+
+El botón «Reintentar» era un `<Link href="/ciclo">` mostrado **estando ya en `/ciclo`**. El App Router reconcilia el mismo componente en la misma posición del árbol, de modo que no se remonta: el efecto de carga no se vuelve a ejecutar y `estado` sigue valiendo `'error'`. El botón no hacía nada, y era **la única acción de esa pantalla**.
+
+Corrección: se sustituye por un `<button>` que recarga la ruta actual de forma controlada, con guardia contra el doble clic, `disabled` y `aria-busy`, y se añade una segunda salida hacia `/perfil`. Se descartó `router.refresh()` porque no remonta componentes de cliente ni reejecuta sus efectos.
+
+**La recuperación relee el estado persistido**: al recargar, el efecto vuelve a consultar perfil, banco e historial desde Supabase, así que un intento ya registrado ni se pierde ni se reenvía — el propio efecto lo descarta de «pendientes».
+
+**Corrección de un hallazgo previo**: el informe de inspección del 12 de agosto afirmaba que `VistaActividad` tenía el mismo patrón. **Era incorrecto.** El estado de error de `VistaActividad` enlaza a `/perfil`, una ruta distinta, que sí navega y sí remonta. No se modificó ese archivo.
+
+No se tocó ningún camino de éxito, ni el contrato del ciclo, ni la persistencia.
+
+### D. Protecciones contra envíos repetidos (confirmadas, no rediseñadas)
+
+En interfaz, las seis pantallas que escriben tienen guardia de estado **y** control deshabilitado durante la petición: `FormularioRegistro`, `FormularioLogin`, `ReenvioConfirmacion`, `FormularioDiagnostico`, `VistaActividad`, `VistaCiclo` (más el logout de `VistaProtegida`).
+
+En servidor y base de datos: diagnóstico único por usuario (`usuario_id` UNIQUE + rechazo en la RPC, con el `409` traducido a redirección a `/perfil`), reutilización del intento duplicado ante mismo par `(ejercicio, respuesta)` normalizado igual que la RPC, unicidad de análisis por `intento_id` con `on conflict do nothing` + relectura, y relectura del historial tras recarga para que una recarga nunca ofrezca repetir lo ya registrado.
+
+**Limitación conocida, no bloqueo**: la prevención de intentos duplicados no es transaccional. Dos peticiones verdaderamente simultáneas podrían crear dos filas. Cerrarlo exige un índice único, es decir una migración nueva, que **no se hará antes de la entrega**.
+
+### E. Documentación de este bloque
+
+- **`README.md` reescrito por completo.** Era todavía el predeterminado de `create-next-app`. Ahora cubre problema, solución, alcance, el papel de Gemini en cada decisión, flujo, stack, arquitectura, URL de producción con su estado real, variables (solo nombres), instrucciones reproducibles, cómo probar producción sin DevTools, seguridad y aislamiento, limitaciones, estado honesto de validación, el aviso de que no es una evaluación clínica, alineamiento con Education & Human Potential, y una sección en inglés.
+- **`docs/cierre-mvp-2026-08-12.md` creado** como documento de cierre consolidado.
+- Esta entrada en `docs/PROGRESO.md`.
+
+### F. Pendiente de producción (al terminar este bloque)
+
+- **Producción sigue desactualizada.** `https://proyecto-gemini-phi.vercel.app` sirve el Sprint B: `/ciclo` responde **404** y `POST /api/adaptar` responde **404**. Los dos commits que contienen el ciclo (`241803b`, `11700de`) no están publicados.
+- **`SUPABASE_SECRET_KEY` sigue sin configurar en Vercel.** Solo hay tres variables (`GEMINI_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`). Desplegar el ciclo sin esta variable daría una demo peor que la actual: los análisis se generarían pero no se conservarían.
+- **Recorrido completo en producción: no ejecutado.**
+
+### G. Pendiente para jueves y viernes
+
+- Controles remotos autenticados **1, 4, 5 y 10**.
+- **Aislamiento comprobado con una segunda sesión** (que una cuenta no pueda leer los análisis de otra).
+- **Idempotencia por interfaz** (doble clic y recarga en `/ciclo`).
+- **Smoke remoto de errores y recuperación**, incluido el botón «Reintentar» corregido hoy, que solo se ha validado localmente.
+- Video público menor de tres minutos, narrativa en inglés o traducida, validación piloto con usuarios reales, y P&L básico.
+
+### Declaración explícita de lo que NO se aprueba
+
+**Las fases E y G no se declaran aprobadas, y el recorrido de extremo a extremo en producción tampoco.** Lo validado hoy es local; lo demostrado antes de hoy ocurrió contra Supabase remoto pero **no** contra la aplicación desplegada. Son cosas distintas y se mantienen separadas a propósito.

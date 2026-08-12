@@ -70,6 +70,9 @@ export default function VistaCiclo() {
   const [historial, setHistorial] = useState<Iteracion[]>([]);
   const [mensajeError, setMensajeError] = useState<string | null>(null);
   const [agotado, setAgotado] = useState(false);
+  // Solo para el boton de recuperacion del estado de error: evita que un
+  // segundo clic dispare otra recarga mientras la primera esta en curso.
+  const [recargando, setRecargando] = useState(false);
 
   const mostradoEn = useRef<number | null>(null);
 
@@ -265,7 +268,40 @@ export default function VistaCiclo() {
         <p className="text-sm text-zinc-800 dark:text-zinc-200">
           {mensajeError ?? MENSAJE_ERROR_ACTIVIDAD}
         </p>
-        <Enlace href="/ciclo">Reintentar</Enlace>
+
+        {/* RECUPERACION REAL DESDE EL ERROR.
+            Antes esto era <Link href="/ciclo"> estando YA en /ciclo. El
+            App Router reconcilia el mismo componente en la misma
+            posicion del arbol, asi que no se remonta: el efecto de carga
+            no se vuelve a ejecutar y "estado" sigue valiendo 'error'. El
+            boton no hacia nada, y era la UNICA accion de esta pantalla,
+            de modo que el usuario quedaba atrapado.
+
+            Recargar la ruta actual es lo unico que garantiza volver a
+            ejecutar el efecto (router.refresh() no remonta componentes
+            de cliente ni reejecuta sus efectos). La recarga RELEE de
+            Supabase el perfil, el banco y el historial de intentos: un
+            intento ya registrado no se pierde ni se reenvia, porque el
+            propio efecto lo descarta de "pendientes". */}
+        <div>
+          <button
+            type="button"
+            onClick={() => {
+              if (recargando) return;
+              setRecargando(true);
+              window.location.reload();
+            }}
+            disabled={recargando}
+            aria-busy={recargando}
+            className="mt-6 inline-flex h-11 items-center justify-center rounded-full bg-foreground px-5 text-sm font-medium text-background transition-colors hover:bg-[#383838] disabled:cursor-not-allowed disabled:opacity-60 dark:hover:bg-[#ccc]"
+          >
+            {recargando ? 'Reintentando…' : 'Reintentar'}
+          </button>
+        </div>
+
+        {/* Segunda salida: si el reintento tampoco funciona, esta
+            pantalla debe dejar marchar al usuario en vez de encerrarlo. */}
+        <Enlace href="/perfil">Volver a mi perfil</Enlace>
       </Tarjeta>
     );
   }
