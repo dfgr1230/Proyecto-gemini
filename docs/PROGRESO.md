@@ -965,3 +965,92 @@ En servidor y base de datos: diagnóstico único por usuario (`usuario_id` UNIQU
 ### Declaración explícita de lo que NO se aprueba
 
 **Las fases E y G no se declaran aprobadas, y el recorrido de extremo a extremo en producción tampoco.** Lo validado hoy es local; lo demostrado antes de hoy ocurrió contra Supabase remoto pero **no** contra la aplicación desplegada. Son cosas distintas y se mantienen separadas a propósito.
+
+---
+
+## Publicación en producción — 12 de agosto de 2026 (Sprint F)
+
+**Estado: el MVP actual está desplegado, vivo y con smoke test anónimo aprobado. El recorrido AUTENTICADO en producción sigue sin ejecutarse.**
+
+Esta entrada supera el apartado «F. Pendiente de producción» de la entrada anterior (Sprint E), que describía producción como desactualizada y `SUPABASE_SECRET_KEY` como no configurada. Ambas cosas dejaron de ser ciertas hoy. Aquella entrada se conserva íntegra como trazabilidad de su momento.
+
+### Orden de las operaciones
+
+Deliberado, y conviene no invertirlo: **primero la credencial, después el despliegue.** Desplegar el ciclo sin `SUPABASE_SECRET_KEY` habría producido una demo *peor* que la anterior — los análisis se generarían pero no se conservarían, y la segunda iteración perdería el análisis previo, que es justo el diferencial que se quiere enseñar al jurado.
+
+1. `SUPABASE_SECRET_KEY` añadida a Vercel en **Production** y **Preview**.
+2. Validación precommit completa.
+3. Commit `8541b22` y push de la rama.
+4. Despliegue a producción.
+5. Smoke test anónimo.
+
+### Credencial de servidor
+
+`SUPABASE_SECRET_KEY` figura ahora en Vercel como **`Encrypted`** en Production y en Preview. El valor se transmitió exclusivamente por la entrada estándar del proceso, desde una variable en memoria leída de `.env.local`: **nunca** apareció como argumento de línea de comandos, nunca se escribió a ningún archivo, y la salida del CLI se capturó y redactó antes de mostrarse. La variable auxiliar se borró de memoria y el script auxiliar se eliminó al terminar. **En ningún momento se leyó ni se mostró su valor.**
+
+Vercel contiene ahora cuatro variables, todas cifradas: `GEMINI_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` y `SUPABASE_SECRET_KEY`.
+
+### Commits
+
+| Commit | Contenido | Runtime |
+|---|---|---|
+| **`8541b22`** — `chore: close Gemini hackathon MVP` | corrección de `VistaCiclo.tsx` + README + PROGRESO + documento de cierre | **este es el commit desplegado en producción** |
+| el commit inmediatamente posterior — `docs: record production MVP deployment` | solo documentación: README, PROGRESO y documento de cierre. Su SHA no puede citarse aquí porque este texto forma parte de él | **no modifica el runtime**; no requiere redespliegue |
+
+La rama remota `origin/feature/dia3-diagnostico-gemini` avanzó de `abdbd41` a `8541b22`. **`master` no se tocó.**
+
+### Despliegue
+
+| | |
+|---|---|
+| Alias público | **https://proyecto-gemini-phi.vercel.app** |
+| Estado | **Ready**, target `production` |
+| Duración de la construcción | 24 s |
+| Commit servido | `8541b22` |
+
+El alias público quedó apuntando al nuevo despliegue, comprobado con `vercel alias ls`.
+
+### Smoke test anónimo — APROBADO
+
+Sin sesión, sin token, sin correo y sin ningún dato personal. No podía crear ni modificar filas, precisamente por no estar autenticado.
+
+| Ruta | Método | HTTP | Tipo |
+|---|---|---|---|
+| `/` `/registro` `/login` `/diagnostico` `/perfil` `/actividad` `/ciclo` | GET | **200** | `text/html` |
+| `/api/perfil` | POST sin `Authorization`, cuerpo `{}` | **401** | `application/json` |
+| `/api/adaptar` | POST sin `Authorization`, cuerpo `{}` | **401** | `application/json` |
+
+Los cuerpos 401 son JSON válido de 34 bytes con las claves `ok` y `codigo` y el valor `sin_sesion`: comprensible, **sin trazas de pila, sin nombres de variables de entorno y sin nada con forma de credencial**.
+
+**Las dos señales que confirman que el despliegue incluyó el ciclo**: `/ciclo` pasó de **404 a 200**, y `POST /api/adaptar` pasó de **404 a 401**. El cambio de 404 a 401 es el más informativo de los dos: significa que la ruta existe *y* que rechaza correctamente a quien no tiene sesión.
+
+**Cero cuentas creadas. Cero filas modificadas.** Los dos intentos y los dos análisis conservados siguen intactos y no se leyeron.
+
+### Qué NO demuestra este bloque
+
+El smoke anónimo demuestra que la aplicación **está desplegada, viva y protegida**. **No** demuestra que el ciclo adaptativo funcione en producción, ni que los análisis se conserven allí. Eso exige un recorrido autenticado, que no se ha ejecutado.
+
+Quedan por tanto **tres niveles de evidencia distintos**, y mezclarlos sería el error fácil:
+
+| Nivel | Qué cubre | Estado |
+|---|---|---|
+| Local | tipos, lint, build, 389 pruebas | ✅ |
+| Contra Supabase remoto | perfil real de Gemini, 2 intentos, 2 análisis, adaptación de nivel y materia | ✅ |
+| En producción | solo comprobaciones **anónimas** | ✅ parcial |
+
+### Pendiente tras este bloque
+
+- **Recorrido autenticado completo en producción** (registro → diagnóstico → perfil → dos iteraciones del ciclo), con una cuenta **nueva**.
+- **Controles remotos autenticados 1, 4, 5 y 10.**
+- **Lectura y escritura bajo RLS** comprobadas con sesión real.
+- **Aislamiento con una segunda sesión controlada.**
+- **Idempotencia mediante interfaz** (doble clic y recarga).
+- **Prueba de errores y recuperación**, incluido el botón «Reintentar» corregido en el Sprint E, que sigue validado solo localmente.
+- **Video público menor de tres minutos.**
+- **Narrativa en inglés o traducción completa** (el README ya tiene una sección en inglés; falta la presentación formal).
+- **Validación piloto con usuarios reales.**
+- **P&L básico.**
+
+### Declaración explícita
+
+**Las fases E y G no se declaran aprobadas. El recorrido de extremo a extremo en producción tampoco.** Lo aprobado hoy es, exactamente, un smoke test anónimo sobre una aplicación desplegada — ni más ni menos.

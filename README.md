@@ -115,7 +115,9 @@ Las dos claves privadas (`GEMINI_API_KEY` y `SUPABASE_SECRET_KEY`) se leen cada 
 
 **https://proyecto-gemini-phi.vercel.app**
 
-> **Estado al 12 de agosto de 2026:** esta URL sirve todavía una versión anterior del MVP, sin el ciclo adaptativo (`/ciclo` responde 404). El despliegue de la versión actual está pendiente. Ver §14 y §15.
+**Actualizada el 12 de agosto de 2026** con el commit `8541b22`, en estado `Ready`. El ciclo adaptativo está desplegado: `/ciclo` responde 200 y `POST /api/adaptar` sin sesión responde 401. Un smoke test anónimo comprobó las siete páginas públicas y los dos endpoints; **no se creó ninguna cuenta y no se modificó ningún dato**.
+
+El **recorrido autenticado completo en producción todavía no se ha ejecutado** — ver §15.
 
 ## 8. Requisitos locales
 
@@ -198,8 +200,8 @@ Esto no es solo una advertencia en el pie de página: está impuesto por el cód
 
 Se declaran de forma explícita porque el proyecto prefiere ser auditable a parecer terminado.
 
-- **Producción está desactualizada.** La URL pública sirve todavía una versión sin el ciclo adaptativo. El despliegue de la versión actual está pendiente.
-- **`SUPABASE_SECRET_KEY` no está configurada en Vercel.** Hasta que lo esté, en producción los análisis se generan pero no se conservan, y la interfaz lo declara en pantalla.
+- **El recorrido autenticado en producción no se ha ejecutado.** Lo verificado en producción hasta ahora es anónimo: páginas públicas y rechazo de los endpoints sin sesión. Que el ciclo completo funcione contra la aplicación desplegada está demostrado en local y contra Supabase remoto, pero **no** todavía en producción.
+- **La conservación de análisis en producción no está comprobada.** `SUPABASE_SECRET_KEY` ya está configurada en Vercel (Production y Preview), pero solo un recorrido autenticado puede demostrar que los análisis se conservan de verdad allí.
 - **El banco de ejercicios tiene 5 ejercicios** (matemáticas niveles 1–3, lenguaje niveles 1–2). El ciclo se agota rápido y lo indica en vez de repetir contenido.
 - **La prevención de intentos duplicados no es transaccional.** Se apoya en releer el historial antes de escribir, lo que cubre el doble clic, el reintento de red y la recarga. Dos peticiones verdaderamente simultáneas podrían crear dos filas; cerrar esa ventana exige un índice único, es decir, una migración nueva que no se hará antes de la entrega.
 - **La protección de rutas en el cliente es una capa de UX, no de seguridad.** La autorización real la imponen siempre las policies RLS.
@@ -214,7 +216,9 @@ Al 12 de agosto de 2026:
 
 **Validado localmente:** comprobación de tipos, ESLint, build de producción y **389 pruebas automatizadas**, todas aprobadas.
 
-**Pendiente:** el despliegue de la versión actual, la configuración de `SUPABASE_SECRET_KEY` en Vercel, el recorrido completo verificado en producción, y varios controles remotos autenticados (entre ellos el aislamiento comprobado con una segunda cuenta). El recorrido de extremo a extremo en producción **no está aprobado formalmente**.
+**Verificado en producción (anónimo):** la versión actual está desplegada y en estado `Ready`. Las siete páginas públicas responden 200, y `POST /api/perfil` y `POST /api/adaptar` sin sesión responden **401** con un JSON breve y comprensible, sin trazas de pila ni datos internos. `SUPABASE_SECRET_KEY` está configurada en Production y Preview. Durante esta comprobación no se creó ninguna cuenta ni se modificó ningún dato.
+
+**Pendiente:** el recorrido autenticado completo en producción; los controles remotos autenticados 1, 4, 5 y 10; la comprobación de lectura y escritura bajo RLS; el aislamiento con una segunda sesión; la idempotencia comprobada desde la interfaz; y la prueba de errores y recuperación. El recorrido de extremo a extremo en producción **no está aprobado formalmente**.
 
 ## 16. Education & Human Potential
 
@@ -232,6 +236,6 @@ Lo que este proyecto explora es si un modelo de lenguaje puede sostener esa aten
 
 **Why Gemini is essential.** Gemini is not decoration — it is the decision engine. It determines the learning style, the initial level, the analysis of each response (strengths, difficulties, priority skill), the recommended next level, the next subject, and the pedagogical approach. Every call receives the base profile, the *previous analysis*, and the full attempt history, so the reasoning is cumulative rather than one-shot. Two boundaries are deliberate: grading is done by PostgreSQL, not by the model, because correctness is a verifiable fact; and if Gemini fails, the app says so instead of inventing a fallback recommendation and presenting it as an AI decision.
 
-**Current MVP status.** The full flow — sign-up, email confirmation, login, diagnostic, real Gemini profile, and two consecutive adaptive iterations with persisted analyses — has been demonstrated in real execution, including a level increase after a correct answer and a subject switch decided by the model. Locally, typecheck, lint, production build, and **389 automated tests** all pass. Still pending: deploying the current version to production, configuring the server-side Supabase credential in Vercel, and a set of authenticated remote checks including cross-account isolation. The end-to-end run in production is **not formally approved yet**.
+**Current MVP status.** The full flow — sign-up, email confirmation, login, diagnostic, real Gemini profile, and two consecutive adaptive iterations with persisted analyses — has been demonstrated in real execution, including a level increase after a correct answer and a subject switch decided by the model. Locally, typecheck, lint, production build, and **389 automated tests** all pass. The current version is **deployed and live** at https://proyecto-gemini-phi.vercel.app: an anonymous smoke test confirmed all seven public pages return 200 and that both API endpoints reject unauthenticated requests with a clean 401, without creating any account or touching any data. Still pending: the full authenticated walkthrough in production, a set of authenticated remote checks including cross-account isolation, and interface-level idempotency and error-recovery testing. The end-to-end run in production is **not formally approved yet**.
 
 **This is not a medical tool.** The generated profile is educational guidance only — never a medical, clinical, psychological, or therapeutic assessment. Clinical vocabulary is rejected in two independent layers, in TypeScript and in PostgreSQL.

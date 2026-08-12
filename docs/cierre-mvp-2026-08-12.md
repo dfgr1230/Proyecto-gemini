@@ -4,7 +4,34 @@ Documento de consolidación para el hackathon **Build with Gemini / XPRIZE**, ca
 
 Resume qué está terminado, con qué evidencia, qué se validó hoy, qué falta y cómo comprobarlo. No contiene claves, valores de configuración ni identificadores de usuario.
 
-**Estado en una línea:** el MVP está completo, validado localmente y documentado; **no está desplegado**, y por tanto el recorrido de extremo a extremo en producción **no está aprobado**.
+**Estado en una línea:** el MVP está completo, validado localmente, **desplegado en producción** y con un smoke test anónimo aprobado; el recorrido **autenticado** de extremo a extremo en producción sigue sin ejecutarse y por tanto **no está aprobado**.
+
+---
+
+## 0. Evidencia de producción — 12 de agosto de 2026
+
+| | |
+|---|---|
+| Alias público | **https://proyecto-gemini-phi.vercel.app** |
+| Estado del despliegue | **Ready**, target `production` |
+| Commit del runtime desplegado | **`8541b22`** — *chore: close Gemini hackathon MVP* |
+| `SUPABASE_SECRET_KEY` en Vercel | **presente** en Production y en Preview (valor cifrado, nunca leído ni mostrado) |
+| Cuentas creadas durante el smoke | **cero** |
+| Filas modificadas durante el smoke | **cero** |
+
+**Smoke test anónimo — aprobado.** Sin sesión, sin token, sin correo y sin datos personales:
+
+| Ruta | Método | HTTP | Tipo de contenido |
+|---|---|---|---|
+| `/` `/registro` `/login` `/diagnostico` `/perfil` `/actividad` `/ciclo` | GET | **200** | `text/html` |
+| `/api/perfil` | POST sin `Authorization`, cuerpo `{}` | **401** | `application/json` |
+| `/api/adaptar` | POST sin `Authorization`, cuerpo `{}` | **401** | `application/json` |
+
+Los dos cuerpos 401 son JSON válido de 34 bytes, con las claves `ok` y `codigo` y el valor `sin_sesion`: un error comprensible, **sin trazas de pila, sin nombres de variables de entorno y sin nada con forma de credencial**.
+
+Las dos señales que confirman que el despliegue incluyó el ciclo adaptativo: `/ciclo` pasó de **404 a 200**, y `POST /api/adaptar` pasó de **404 a 401**.
+
+**Lo que esto NO demuestra**: que el ciclo funcione de extremo a extremo en producción, ni que los análisis se conserven allí. Eso exige un recorrido autenticado, que no se ha ejecutado. Ver §5 y §9.
 
 ---
 
@@ -83,8 +110,8 @@ Ejecutadas dos veces: antes y después de la única corrección de código del d
 
 Se declaran de forma explícita. Ninguna es un bloqueo para la entrega.
 
-1. **Producción está desactualizada** y sirve una versión sin el ciclo adaptativo.
-2. **`SUPABASE_SECRET_KEY` no está configurada en Vercel.** Sin ella, en producción los análisis se generarían pero no se conservarían — y la interfaz lo declararía en pantalla en vez de fingir lo contrario.
+1. **El recorrido autenticado en producción no se ha ejecutado.** Lo verificado allí es anónimo: páginas públicas y rechazo de los endpoints sin sesión.
+2. **La conservación de análisis en producción no está comprobada.** `SUPABASE_SECRET_KEY` ya está configurada en Production y Preview, pero solo un recorrido autenticado puede demostrar que los análisis se conservan de verdad allí.
 3. **La prevención de intentos duplicados no es transaccional.** Cubre el doble clic, el reintento de red y la recarga, pero dos peticiones verdaderamente simultáneas podrían crear dos filas. Cerrarlo exige un índice único, es decir una migración nueva, que **no se hará antes de la entrega**.
 4. **El banco tiene solo 5 ejercicios**, de modo que el ciclo se agota rápido. La aplicación lo indica en vez de repetir contenido.
 5. **La protección de rutas en el cliente es una capa de UX**, no de autorización. La autorización real la imponen siempre las policies RLS.
@@ -133,19 +160,11 @@ Requiere un `.env.local` con `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_P
 
 ## 7. Smoke test en producción
 
-**Precondición innegociable:** antes de este smoke deben haberse hecho, en este orden, (a) configurar `SUPABASE_SECRET_KEY` en Vercel y (b) desplegar la versión actual. Desplegar sin la variable produciría una demo peor que la actual.
+**Precondición: cumplida el 12 de agosto de 2026.** `SUPABASE_SECRET_KEY` se configuró en Vercel *antes* de desplegar, en ese orden — desplegar el ciclo sin la variable habría producido una demo peor que la anterior.
 
-### 7.1 Comprobaciones sin cuenta (anónimas)
+### 7.1 Comprobaciones sin cuenta (anónimas) — ✅ EJECUTADAS Y APROBADAS
 
-| Comprobación | Esperado |
-|---|---|
-| `GET /` | 200 |
-| `GET /diagnostico` | 200 |
-| `GET /ciclo` | **200** (hoy da 404) |
-| `POST /api/perfil` sin token | **401** |
-| `POST /api/adaptar` sin token | **401** (hoy da 404) |
-
-El cambio de 404 a 401 en `/api/adaptar` es la señal de que el despliegue incluyó el ciclo.
+Resultados completos en §0. Las siete páginas públicas devolvieron 200 y ambos endpoints devolvieron 401 con JSON limpio. `/ciclo` pasó de 404 a 200 y `/api/adaptar` de 404 a 401, que era la señal buscada de que el despliegue incluyó el ciclo.
 
 ### 7.2 Recorrido con una cuenta nueva
 
@@ -194,5 +213,6 @@ Nada de esto depende del código, y es lo que queda más atrasado.
 Se dice de forma explícita para que nadie lo lea de más:
 
 - **Las fases E y G no están aprobadas formalmente.**
-- **El recorrido de extremo a extremo en producción no está aprobado**, porque no se ha ejecutado.
-- Lo validado el 12 de agosto es **local**. Lo demostrado antes de esa fecha ocurrió contra **Supabase remoto**, pero **no** contra la aplicación desplegada. Son cosas distintas y se mantienen separadas a propósito.
+- **El recorrido de extremo a extremo en producción no está aprobado**, porque el recorrido **autenticado** no se ha ejecutado.
+- El smoke anónimo aprobado demuestra que la aplicación **está desplegada, viva y protegida**; **no** demuestra que el ciclo adaptativo funcione allí ni que los análisis se conserven allí.
+- Existen por tanto tres niveles de evidencia, y se mantienen separados a propósito: lo **validado localmente** (tipos, lint, build, 389 pruebas), lo **demostrado contra Supabase remoto** (perfil real de Gemini, dos intentos, dos análisis), y lo **verificado en producción** (solo anónimo). Ninguno sustituye a los otros.
