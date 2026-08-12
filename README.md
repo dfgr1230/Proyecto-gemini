@@ -44,6 +44,8 @@ Gemini no adorna la interfaz: **es quien decide**. El reparto de responsabilidad
 | Si una respuesta concreta es correcta | **PostgreSQL**, dentro de `registrar_intento()` |
 | Qué ejercicio del banco encaja con la recomendación | Búsqueda determinista |
 
+El banco tiene **10 actividades**: 5 de matemáticas y 5 de lenguaje, con 2/2/1 en los niveles 1/2/3 de cada materia. Que las dos materias cubran los tres niveles es lo que permite a Gemini **cambiar de materia sin perder el nivel** que acaba de decidir. **No existe ninguna secuencia rígida de materias** —nada de «primero las de matemáticas y luego las de lenguaje»—: el orden lo determina la recomendación del modelo en cada iteración.
+
 Dos matices que importan para entender el diseño:
 
 - **La calificación no la hace el modelo.** Comparar la respuesta con la respuesta oficial lo hace la base de datos, porque es un hecho verificable y no debe depender de un generador de texto.
@@ -202,10 +204,10 @@ Se declaran de forma explícita porque el proyecto prefiere ser auditable a pare
 
 - **El recorrido autenticado en producción no se ha ejecutado.** Lo verificado en producción hasta ahora es anónimo: páginas públicas y rechazo de los endpoints sin sesión. Que el ciclo completo funcione contra la aplicación desplegada está demostrado en local y contra Supabase remoto, pero **no** todavía en producción.
 - **La conservación de análisis en producción no está comprobada.** `SUPABASE_SECRET_KEY` ya está configurada en Vercel (Production y Preview), pero solo un recorrido autenticado puede demostrar que los análisis se conservan de verdad allí.
-- **El banco de ejercicios tiene 5 ejercicios** (matemáticas niveles 1–3, lenguaje niveles 1–2). El ciclo se agota rápido y lo indica en vez de repetir contenido.
+- **El banco de ejercicios es finito: 10 actividades** (matemáticas y lenguaje, 2/2/1 en los niveles 1/2/3 cada una). El ciclo se agota y lo indica en vez de repetir contenido. **No hay generación dinámica de ejercicios**: Gemini decide qué conviene a continuación, pero las actividades están escritas de antemano y viven en la base de datos.
 - **La prevención de intentos duplicados no es transaccional.** Se apoya en releer el historial antes de escribir, lo que cubre el doble clic, el reintento de red y la recarga. Dos peticiones verdaderamente simultáneas podrían crear dos filas; cerrar esa ventana exige un índice único, es decir, una migración nueva que no se hará antes de la entrega.
 - **La protección de rutas en el cliente es una capa de UX, no de seguridad.** La autorización real la imponen siempre las policies RLS.
-- **La selección de la siguiente actividad prioriza el nivel sobre la materia.** Si Gemini pide lenguaje y el banco no tiene lenguaje en ese nivel, se sirve otra materia en el nivel adecuado. La interfaz declara si la coincidencia fue exacta.
+- **La selección de la siguiente actividad prioriza el nivel sobre la materia.** Si Gemini pide una materia que el banco no cubre en ese nivel, se sirve otra materia en el nivel adecuado, y la interfaz declara que la coincidencia no fue exacta. Con el banco de 10 esto ya no ocurre dentro de los niveles 1 a 3: ambas materias los cubren, así que una recomendación en ese rango se cumple de forma exacta en materia **y** nivel.
 - **El retorno del enlace de confirmación de correo** no se ha validado de extremo a extremo; la cuenta queda utilizable, comprobado por el inicio de sesión posterior.
 
 ## 15. Estado honesto de la validación
@@ -214,7 +216,9 @@ Al 12 de agosto de 2026:
 
 **Demostrado en ejecución real:** registro, confirmación e inicio de sesión; diagnóstico de 12 preguntas; llamada real a Gemini con `POST /api/perfil` respondiendo 200 y perfil persistido; dos interacciones consecutivas del ciclo adaptativo con análisis reales conservados, en las que el modelo subió el nivel tras un acierto, lo mantuvo tras el siguiente y cambió la materia de matemáticas a lenguaje, citando explícitamente el análisis anterior.
 
-**Validado localmente:** comprobación de tipos, ESLint, build de producción y **389 pruebas automatizadas**, todas aprobadas.
+**Validado localmente:** comprobación de tipos, ESLint, build de producción y **405 pruebas automatizadas**, todas aprobadas.
+
+**Banco de actividades (12 de agosto de 2026):** ampliado de 5 a **10 ejercicios** mediante la migración `0007`, aplicada y verificada contra el proyecto remoto — 5 de matemáticas y 5 de lenguaje, con 2/2/1 en los niveles 1/2/3 de cada materia, y **lenguaje nivel 3 ya disponible**. Fue una ampliación **únicamente de contenido**: el motor adaptativo no cambió.
 
 **Verificado en producción (anónimo):** la versión actual está desplegada y en estado `Ready`. Las siete páginas públicas responden 200, y `POST /api/perfil` y `POST /api/adaptar` sin sesión responden **401** con un JSON breve y comprensible, sin trazas de pila ni datos internos. `SUPABASE_SECRET_KEY` está configurada en Production y Preview. Durante esta comprobación no se creó ninguna cuenta ni se modificó ningún dato.
 

@@ -74,8 +74,26 @@ Fuera de alcance y no construido, según `CLAUDE.md` §6: panel administrativo, 
 
 - El segundo análisis **usó explícitamente** el análisis anterior y los dos intentos.
 - Conteos conservados: `diagnosticos` **1**, `intentos` **2**, `analisis_adaptativos` **2**.
-- Banco de **cinco ejercicios**: matemáticas niveles 1, 2 y 3; lenguaje niveles 1 y 2.
+- Banco de **cinco ejercicios** en el momento de esa demostración: matemáticas niveles 1, 2 y 3; lenguaje niveles 1 y 2. **Ampliado después a diez** — ver §2 bis.
 - **Ocho de doce controles remotos** demostrados: 2, 3, 6, 7, 8, 9, 11 y 12.
+
+### 2 bis. Ampliación del banco a diez actividades (12 de agosto de 2026)
+
+Migración `0007_dia3_ampliar_banco_a_diez.sql`, **aplicada y verificada** contra el proyecto remoto con `supabase migration up --linked` (una sola migración aplicada; historial `0001`–`0007` alineado Local/Remote).
+
+| Materia | Nivel 1 | Nivel 2 | Nivel 3 | Total |
+|---|---:|---:|---:|---:|
+| Matemáticas | 2 | 2 | 1 | **5** |
+| Lenguaje | 2 | 2 | 1 | **5** |
+| **Total** | 4 | 4 | 2 | **10** |
+
+Distribución **verificada por lectura remota de solo lectura** sobre `public.ejercicios` (solo conteos agregados; ninguna fila impresa). La propia migración verificó además, dentro de su transacción, que ningún ejercicio queda sin respuesta oficial y que la integridad referencial se mantiene.
+
+**Qué cambió y qué no.** Fue una ampliación **exclusivamente de contenido**: cinco actividades nuevas y sus cinco respuestas oficiales. **No se tocó el esquema** (ninguna tabla, columna, índice, función, policy ni grant) **ni el motor adaptativo**. Gemini sigue decidiendo materia, nivel y enfoque después de cada respuesta, y el selector sigue limitándose a buscar en el banco la actividad que mejor corresponda. **No existe ninguna secuencia rígida de materias.**
+
+**Lo que resuelve:** antes no había lenguaje nivel 3, así que una recomendación de Gemini para esa casilla no podía cumplirse de forma exacta. Ahora las dos materias cubren los niveles 1 a 3, de modo que el modelo puede cambiar de materia sin perder el nivel que acaba de decidir. Efecto añadido: con dos actividades por casilla en los niveles 1 y 2, **mantener** el nivel ya no obliga a repetir ejercicio.
+
+**Lo que sigue igual de limitado:** el banco es **finito** (10 actividades) y **no hay generación dinámica de ejercicios**. El ciclo se agota y lo declara.
 
 ### Sobre las versiones de análisis 1 y 3
 
@@ -98,7 +116,7 @@ Pensada para que el jurado no tenga que creerlo por fe:
 |---|---|---|
 | `npx tsc --noEmit` | exit 0 | ~6 s |
 | `npm run lint` | exit 0 | ~48 s |
-| `node --test` (7 archivos) | **389/389 aprobadas**, 0 fallidas | ~1 s |
+| `node --test` (7 archivos) | **405/405 aprobadas**, 0 fallidas | ~1 s |
 | `npm run build` | exit 0 — `/ciclo` y `/api/adaptar` en el manifiesto | ~27 s |
 | `git diff --check` | exit 0 | — |
 
@@ -113,7 +131,7 @@ Se declaran de forma explícita. Ninguna es un bloqueo para la entrega.
 1. **El recorrido autenticado en producción no se ha ejecutado.** Lo verificado allí es anónimo: páginas públicas y rechazo de los endpoints sin sesión.
 2. **La conservación de análisis en producción no está comprobada.** `SUPABASE_SECRET_KEY` ya está configurada en Production y Preview, pero solo un recorrido autenticado puede demostrar que los análisis se conservan de verdad allí.
 3. **La prevención de intentos duplicados no es transaccional.** Cubre el doble clic, el reintento de red y la recarga, pero dos peticiones verdaderamente simultáneas podrían crear dos filas. Cerrarlo exige un índice único, es decir una migración nueva, que **no se hará antes de la entrega**.
-4. **El banco tiene solo 5 ejercicios**, de modo que el ciclo se agota rápido. La aplicación lo indica en vez de repetir contenido.
+4. **El banco es finito: 10 actividades**, de modo que el ciclo se agota. La aplicación lo indica en vez de repetir contenido. **No hay generación dinámica de ejercicios**: Gemini decide qué conviene a continuación, pero las actividades están escritas de antemano.
 5. **La protección de rutas en el cliente es una capa de UX**, no de autorización. La autorización real la imponen siempre las policies RLS.
 6. **La selección de la siguiente actividad prioriza el nivel sobre la materia** cuando el banco no tiene ambos. La interfaz declara si la coincidencia fue exacta.
 7. **El retorno del enlace de confirmación de correo** no está validado de extremo a extremo; la cuenta queda utilizable, comprobado por el inicio de sesión posterior.
@@ -215,4 +233,4 @@ Se dice de forma explícita para que nadie lo lea de más:
 - **Las fases E y G no están aprobadas formalmente.**
 - **El recorrido de extremo a extremo en producción no está aprobado**, porque el recorrido **autenticado** no se ha ejecutado.
 - El smoke anónimo aprobado demuestra que la aplicación **está desplegada, viva y protegida**; **no** demuestra que el ciclo adaptativo funcione allí ni que los análisis se conserven allí.
-- Existen por tanto tres niveles de evidencia, y se mantienen separados a propósito: lo **validado localmente** (tipos, lint, build, 389 pruebas), lo **demostrado contra Supabase remoto** (perfil real de Gemini, dos intentos, dos análisis), y lo **verificado en producción** (solo anónimo). Ninguno sustituye a los otros.
+- Existen por tanto tres niveles de evidencia, y se mantienen separados a propósito: lo **validado localmente** (tipos, lint, build, 405 pruebas), lo **demostrado contra Supabase remoto** (perfil real de Gemini, dos intentos, dos análisis), y lo **verificado en producción** (solo anónimo). Ninguno sustituye a los otros.

@@ -1054,3 +1054,112 @@ Quedan por tanto **tres niveles de evidencia distintos**, y mezclarlos sería el
 ### Declaración explícita
 
 **Las fases E y G no se declaran aprobadas. El recorrido de extremo a extremo en producción tampoco.** Lo aprobado hoy es, exactamente, un smoke test anónimo sobre una aplicación desplegada — ni más ni menos.
+
+---
+
+## Ampliación del banco a diez actividades — 12 de agosto de 2026 (Sprint G)
+
+**Estado: migración `0007` APLICADA y VERIFICADA en el proyecto remoto. El banco pasa de cinco a diez ejercicios. El motor adaptativo NO cambió.**
+
+Esta entrada actualiza el «banco de cinco ejercicios» que las entradas anteriores dan por vigente. Aquellas se conservan íntegras: describían el estado real en su fecha.
+
+### Por qué hacía falta
+
+Tras `0002` y `0006` el banco era asimétrico: matemáticas cubría los niveles 1, 2 y 3, pero lenguaje solo llegaba al 2. Cuando el análisis de Gemini recomendaba «lenguaje, nivel 3» **no existía ninguna actividad que correspondiera**, y el selector tenía que servir una aproximación —matemáticas nivel 3— declarándolo honestamente en la interfaz. La recomendación del modelo se cumplía a medias **por falta de contenido, no por un fallo de la lógica**.
+
+### Distribución resultante
+
+| Materia | Nivel 1 | Nivel 2 | Nivel 3 | Total |
+|---|---:|---:|---:|---:|
+| Matemáticas | 2 | 2 | 1 | **5** |
+| Lenguaje | 2 | 2 | 1 | **5** |
+| **Total** | 4 | 4 | 2 | **10** |
+
+**Lenguaje nivel 3 ya está disponible**, que era el hueco concreto que esta migración existía para cerrar.
+
+### Las cinco actividades nuevas
+
+Originales, escritas para esta migración, sin citar ninguna obra existente. Ninguna repite la habilidad de las cinco ya presentes (suma de una cifra, suma con llevada, identificar un sustantivo, identificar el verbo):
+
+| Materia | Nivel | Habilidad |
+|---|---|---|
+| Matemáticas | 1 | resta de un paso en contexto |
+| Matemáticas | 2 | problema contextual de **dos pasos** |
+| Lenguaje | 1 | comprensión **literal** de un texto muy corto |
+| Lenguaje | 2 | función de un conector adversativo |
+| Lenguaje | 3 | identificar la conclusión **respaldada**, descartando extrapolaciones |
+
+Respuestas oficiales **A, C, D, B, C**: no son constantes, por el mismo motivo documentado en `0006` — con un banco pequeño y una respuesta oficial fija, cualquiera acertaría sin resolver y las métricas del piloto no significarían nada.
+
+**Corrección pedagógica antes de aplicar.** La primera redacción del ejercicio de lenguaje nivel 3 afirmaba una relación causal más fuerte de la que el texto sostenía. Se reescribió para que la opción correcta recoja la relación **observada** —coincidencia temporal entre el uso de los bebederos y la reducción de compra y desecho de botellas— sin afirmar causalidad absoluta. Las tres opciones descartadas quedan como extrapolaciones injustificadas: una contradice el texto, otra exagera una reducción parcial y la tercera introduce una prohibición que nunca se menciona. La actividad sigue siendo de nivel 3 porque exige distinguir una conclusión respaldada de tres que no lo están.
+
+### Qué cambió y qué NO
+
+Fue una ampliación **exclusivamente de contenido**: cinco filas en `public.ejercicios` y cinco en `public.ejercicios_respuestas`.
+
+**No se tocó**: ninguna tabla, columna, índice, función, policy, grant ni RLS. Tampoco el selector (`siguiente.ts`), el contrato del análisis, el ciclo, el prompt ni ninguna ruta de API. `0001`–`0006` conservan sus hashes SHA-256, verificado por prueba automatizada.
+
+**Gemini sigue decidiendo** materia, nivel y enfoque después de cada respuesta; el selector sigue limitándose a buscar en el banco la actividad que mejor corresponda. **No existe ninguna secuencia rígida de materias** —nada de «primero las cinco de matemáticas y después las cinco de lenguaje»—, y hay una prueba que falla si `siguiente.ts` llegara a nombrar una materia literalmente.
+
+**Mejora añadida, no buscada:** con dos actividades por casilla en los niveles 1 y 2, cuando Gemini decide **mantener** el nivel —consolidar antes de avanzar— el estudiante recibe ahora un ejercicio *distinto* del mismo nivel. Antes era imposible.
+
+### La migración
+
+`supabase/migrations/0007_dia3_ampliar_banco_a_diez.sql`, 404 líneas, exclusivamente de datos y en una transacción única. Trece `raise exception`: precondición sobre el banco de partida, verificación del `contenido` completo antes de asociar cada respuesta oficial, verificación de cada respuesta, y recuento final de la distribución.
+
+La precondición admite **dos estados y solo dos** —el banco de cinco y el de diez, para que el archivo sea idempotente— y aborta nombrando exactamente qué sobra si aparece cualquier ejercicio ajeno al historial. No tolera un banco desconocido en silencio.
+
+### Aplicación remota
+
+Con la CLI de Supabase **v2.112.0 ya presente en la caché local de npx** (no se instaló ni se descargó nada):
+
+1. `supabase migration list --linked` → `0001`–`0006` alineadas Local/Remote, `0007` solo en Local, ninguna migración remota desconocida ni otra local pendiente.
+2. `supabase migration up --linked` → aplicó **exactamente una** migración, `0007_dia3_ampliar_banco_a_diez.sql`. Exit 0.
+3. `supabase migration list --linked` → **`0001`–`0007` alineadas Local/Remote**.
+
+**No** se usó `db push` (ni como dry-run), `db reset`, `migration repair`, el SQL Editor ni Docker.
+
+### Verificación remota del banco
+
+Lectura de **solo lectura** sobre `public.ejercicios`, mediante un proceso Node temporal ya eliminado. Solo dos columnas, y solo se informaron **conteos agregados**: ninguna fila, ningún enunciado, ningún identificador.
+
+Resultado: **10 ejercicios, 5 y 5 por materia, 2/2/1 por niveles en cada una, cero ejercicios fuera de los niveles 1–3.** Coincide exactamente con lo previsto.
+
+Nota metodológica: la lectura tuvo que hacerse con la credencial de servidor. `public.ejercicios` tiene `revoke all … from anon` y solo concede `SELECT` a `authenticated`, así que con la clave publicable y sin sesión devuelve `42501` — y obtener un JWT habría exigido crear o usar una cuenta, prohibido en este bloque. El alcance se mantuvo mínimo: una lectura, de dos columnas, de la única tabla del proyecto que **no contiene ningún dato de estudiante**.
+
+`public.ejercicios_respuestas` **no se consultó**: su RLS sin policies lo impide por diseño, y no hacía falta — la propia migración verificó dentro de su transacción que ningún ejercicio queda sin respuesta oficial y que la integridad referencial se mantiene.
+
+### Evidencia local
+
+- Suite completa: **405/405 aprobadas** (389 previas sin regresión + 16 nuevas).
+- `npx tsc --noEmit`, `npm run lint` y `npm run build`: exitosos.
+- Sección 10 nueva en `ciclo.test.mjs`. El banco de las pruebas se construye **parseando las migraciones**, no de una lista escrita a mano: si `0007` cambiara, las pruebas cambian con él.
+- Comprobado que el selector encuentra coincidencia **exacta de materia y nivel en las seis casillas** del banco, incluida lenguaje nivel 3.
+
+**Dos correcciones necesarias en las pruebas**, ambas de infraestructura y ninguna cosmética:
+
+- `leer()` normaliza CRLF a LF. Con `core.autocrlf` activo, los cambios de rama del Sprint F reescribieron los archivos y una prueba preexistente con un `\n` literal empezó a fallar **sin que nadie hubiera tocado el SQL**. Se aplica el mismo criterio que la prueba de hashes ya documentaba: lo que se vigila es el contenido, no su codificación de salto de línea.
+- La comprobación de vocabulario clínico de `0007` opera sobre el SQL **ejecutable**. La cabecera declara a propósito que el archivo no añade contenido clínico, y buscar las raíces en los comentarios convertía esa explicación en un falso positivo — el motivo por el que `sqlEjecutable` existe.
+
+### Límites que NO cambian
+
+- El banco sigue siendo **finito**: diez actividades. El ciclo se agota y lo declara en vez de repetir contenido.
+- **No existe generación dinámica de ejercicios.** Gemini decide qué conviene a continuación; las actividades están escritas de antemano y viven en la base de datos.
+
+### Lo que sigue SIN aprobarse
+
+Sin cambios respecto del Sprint F, y conviene no leer de más en este bloque:
+
+- **recorrido autenticado completo en producción**;
+- **controles remotos autenticados 1, 4, 5 y 10**;
+- **aislamiento entre sesiones**;
+- **idempotencia mediante interfaz**;
+- **prueba de errores y recuperación**;
+- **fases E y G**;
+- **end-to-end formal**.
+
+Lo aprobado aquí es, exactamente: una migración de datos aplicada y verificada por conteos, y una suite local en verde.
+
+### Cero efectos sobre datos de estudiantes
+
+No se creó ninguna cuenta, no se usó ninguna existente, no se llamó a ningún endpoint autenticado, y **el diagnóstico, los dos intentos y los dos análisis conservados no se leyeron ni se alteraron**. Lo único que se añadió al proyecto remoto fueron cinco ejercicios y sus cinco respuestas oficiales.
