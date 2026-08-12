@@ -40,7 +40,14 @@ import { RAICES_CLINICAS_PROHIBIDAS } from '../diagnostico/contrato.ts';
 import { analisisValido } from './ejemplo.test-util.mjs';
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
-const leer = (relativo) => readFileSync(path.join(RAIZ, relativo), 'utf8');
+// Se NORMALIZA a LF al leer, por el mismo motivo que la prueba de hashes
+// ya normalizaba por su cuenta: con core.autocrlf activo, un clon o un
+// cambio de rama en Windows reescribe los archivos con CRLF, y cualquier
+// comprobacion con un "\n" literal empezaria a fallar sin que nadie
+// hubiera tocado el SQL. Lo que se vigila es el contenido, no su
+// codificacion de salto de linea.
+const leer = (relativo) =>
+  readFileSync(path.join(RAIZ, relativo), 'utf8').replace(/\r\n/g, '\n');
 
 const RUTA_CICLO = 'src/app/api/adaptar/route.ts';
 const RUTA_ORQUESTADOR = 'src/lib/adaptativo/ciclo.ts';
@@ -934,6 +941,7 @@ test('[ESTATICA] el historial de migraciones es exactamente el previsto', () => 
     '0004_dia3_guardar_perfil_detectado.sql',
     '0005_dia3_analisis_adaptativos.sql',
     '0006_dia3_ampliar_banco.sql',
+    '0007_dia3_ampliar_banco_a_diez.sql',
   ]);
 });
 
@@ -1296,3 +1304,402 @@ test('[ESTATICA] los ejercicios de 0006 caben en los CHECK de 0001', () => {
   }
 });
 
+
+// ================================================================
+// 10. La ampliacion del banco a DIEZ (0007)
+//
+// Las marcadas [ESTATICA] LEEN EL TEXTO del archivo, con el mismo limite
+// explicito de la seccion 9: 0007 todavia NO se ha aplicado, asi que NO
+// demuestran el comportamiento real en PostgreSQL -- demuestran que lo
+// que se va a aplicar es exactamente lo que se pretende.
+//
+// Las pruebas del SELECTOR del final SI son de comportamiento real:
+// ejecutan seleccionarSiguienteActividad() sobre el banco de diez tal
+// como las migraciones lo describen.
+// ================================================================
+
+const RUTA_0007 = 'supabase/migrations/0007_dia3_ampliar_banco_a_diez.sql';
+
+// Extrae las tuplas del INSERT de ejercicios de una migracion escrita con
+// el estilo de 0006/0007, y las devuelve con la MISMA forma que produce
+// PostgREST al leer public.ejercicios. Asi pueden pasarse por el contrato
+// real de la aplicacion en vez de por una copia de sus reglas.
+function ejerciciosDeclarados(sql) {
+  const bloque = sql.slice(
+    sql.indexOf('insert into public.ejercicios (id, materia, nivel_dificultad, contenido)'),
+    sql.indexOf('on conflict (id) do nothing')
+  );
+  const patron =
+    /'([0-9a-f-]{36})',\s*'(matematicas|lenguaje)',\s*(\d+),\s*jsonb_build_object\(\s*'tipo',\s*'([^']*)',\s*'enunciado',\s*'([^']*)',\s*'opciones',\s*jsonb_build_object\(([^)]*)\)/g;
+
+  return [...bloque.matchAll(patron)].map((m) => {
+    const opciones = {};
+    for (const par of m[6].matchAll(/'([^']*)',\s*'([^']*)'/g)) opciones[par[1]] = par[2];
+    return {
+      id: m[1],
+      materia: m[2],
+      nivel_dificultad: Number(m[3]),
+      contenido: { tipo: m[4], enunciado: m[5], opciones },
+    };
+  });
+}
+
+function respuestasDeclaradas(sql) {
+  const bloque = sql.slice(
+    sql.indexOf('insert into public.ejercicios_respuestas'),
+    sql.indexOf('on conflict (ejercicio_id) do nothing')
+  );
+  return Object.fromEntries(
+    [...bloque.matchAll(/'([0-9a-f-]{36})',\s*'([A-D])'/g)].map((m) => [m[1], m[2]])
+  );
+}
+
+// Las cinco filas que 0007 EXIGE encontrar antes de insertar nada. Es su
+// declaracion del banco de partida, y mas abajo se contrasta contra lo
+// que 0002 y 0006 crean de verdad.
+function precondicionDeclarada(sql) {
+  const bloque = sql.slice(sql.indexOf('values', sql.indexOf('do $$')), sql.indexOf('as previo'));
+  return [...bloque.matchAll(/'([0-9a-f-]{36})'::uuid,\s*'(matematicas|lenguaje)',\s*(\d+)/g)].map(
+    (m) => ({ id: m[1], materia: m[2], nivel_dificultad: Number(m[3]) })
+  );
+}
+
+test('[ESTATICA] 0007 es exclusivamente de datos: ninguna sentencia de esquema', () => {
+  const sql = sqlEjecutable(leer(RUTA_0007));
+
+  for (const prohibida of [
+    /create\s+table/i,
+    /create\s+index/i,
+    /create\s+policy/i,
+    /create\s+(or\s+replace\s+)?function/i,
+    /alter\s+table/i,
+    /drop\s+/i,
+    /truncate/i,
+    /grant\s/i,
+    /revoke\s/i,
+    /row level security/i,
+  ]) {
+    assert.ok(!prohibida.test(sql), `0007 no debe contener ${prohibida}`);
+  }
+
+  // Escrituras destructivas, buscadas como sentencia y no como palabra
+  // suelta (los comentarios hablan a proposito de lo que NO se hace).
+  assert.ok(!/^\s*delete\s+from/im.test(sql), '0007 no debe borrar filas');
+  assert.ok(!/^\s*update\s+public\./im.test(sql), '0007 no debe modificar filas existentes');
+
+  // Solo INSERT, y solo sobre las dos tablas de contenido.
+  const inserts = [...sql.matchAll(/insert\s+into\s+(\S+)/gi)].map((m) => m[1]);
+  assert.deepEqual(inserts, ['public.ejercicios', 'public.ejercicios_respuestas']);
+});
+
+test('[ESTATICA] 0007 es una transaccion unica y completa', () => {
+  const sql = sqlEjecutable(leer(RUTA_0007));
+  assert.equal((sql.match(/^begin;$/gm) ?? []).length, 1);
+  assert.equal((sql.match(/^commit;$/gm) ?? []).length, 1);
+  assert.ok(!/rollback/i.test(sql));
+});
+
+test('[ESTATICA] 0007 declara exactamente cinco ejercicios y cinco respuestas', () => {
+  const sql = leer(RUTA_0007);
+  const ejercicios = ejerciciosDeclarados(sql);
+  const respuestas = respuestasDeclaradas(sql);
+
+  assert.equal(ejercicios.length, 5, 'deben ser exactamente cinco ejercicios nuevos');
+  assert.equal(Object.keys(respuestas).length, 5, 'deben ser exactamente cinco respuestas');
+
+  // Cada ejercicio nuevo tiene su respuesta, y ninguna respuesta cuelga
+  // de un ejercicio que este archivo no crea.
+  assert.deepEqual(Object.keys(respuestas).sort(), ejercicios.map((e) => e.id).sort());
+});
+
+test('[ESTATICA] los ejercicios nuevos cumplen el contrato de la aplicacion', () => {
+  const ejercicios = ejerciciosDeclarados(leer(RUTA_0007));
+  // normalizarEjercicios descarta todo lo que no pase validarEjercicio, que
+  // es la MISMA funcion que usa la interfaz. Si los cinco sobreviven, los
+  // cinco cumplen el contrato real -- incluido el rechazo de un contenido
+  // que expusiera la respuesta oficial.
+  const validos = normalizarEjercicios(ejercicios);
+  assert.equal(validos.length, 5, 'los cinco ejercicios deben pasar validarEjercicio');
+
+  for (const e of validos) {
+    assert.equal(e.contenido.tipo, 'opcion_multiple');
+    const opciones = Object.entries(e.contenido.opciones);
+    assert.equal(opciones.length, 4, 'cada actividad ofrece cuatro opciones');
+    const textos = opciones.map(([, t]) => t.trim().toLowerCase());
+    assert.equal(new Set(textos).size, 4, 'las opciones deben ser distintas entre si');
+    assert.ok(e.contenido.enunciado.length > 10, 'el enunciado debe ser legible');
+  }
+});
+
+test('[ESTATICA] cada respuesta oficial corresponde a una opcion existente', () => {
+  const sql = leer(RUTA_0007);
+  const ejercicios = ejerciciosDeclarados(sql);
+  const respuestas = respuestasDeclaradas(sql);
+
+  for (const e of ejercicios) {
+    const oficial = respuestas[e.id];
+    assert.ok(
+      Object.keys(e.contenido.opciones).includes(oficial),
+      `la respuesta oficial "${oficial}" no es una opcion del ejercicio ${e.id.slice(0, 8)}`
+    );
+  }
+
+  // Mismo criterio que 0006: con un banco pequeno, una respuesta oficial
+  // constante permitiria acertar sin resolver.
+  assert.ok(
+    new Set(Object.values(respuestas)).size > 1,
+    'las respuestas oficiales no pueden ser todas iguales'
+  );
+});
+
+test('[ESTATICA] no hay identificadores duplicados en todo el banco', () => {
+  const nuevos = ejerciciosDeclarados(leer(RUTA_0007)).map((e) => e.id);
+  const previos = ejerciciosDeclarados(leer(RUTA_0006)).map((e) => e.id);
+  const semilla = '00000000-0000-0000-0000-000000000001';
+
+  assert.equal(new Set(nuevos).size, 5, '0007 no puede repetir un id consigo mismo');
+  const todos = [semilla, ...previos, ...nuevos];
+  assert.equal(todos.length, 10, 'el banco previsto son diez ejercicios');
+  assert.equal(new Set(todos).size, 10, 'ningun id puede repetirse entre migraciones');
+});
+
+test('[ESTATICA] la precondicion de 0007 describe el banco que 0002 y 0006 crean', () => {
+  const precondicion = precondicionDeclarada(leer(RUTA_0007));
+  assert.equal(precondicion.length, 5, '0007 debe exigir las cinco filas de partida');
+
+  // Las cuatro de 0006, contrastadas con lo que 0006 declara de verdad.
+  for (const e of ejerciciosDeclarados(leer(RUTA_0006))) {
+    const exigida = precondicion.find((p) => p.id === e.id);
+    assert.ok(exigida, `0007 no exige el ejercicio ${e.id.slice(0, 8)} que crea 0006`);
+    assert.equal(exigida.materia, e.materia);
+    assert.equal(exigida.nivel_dificultad, e.nivel_dificultad);
+  }
+
+  // Y la semilla tecnica de 0002.
+  const semilla = precondicion.find((p) => p.id === '00000000-0000-0000-0000-000000000001');
+  assert.ok(semilla, '0007 debe exigir la semilla de 0002');
+  assert.equal(semilla.materia, 'matematicas');
+  assert.equal(semilla.nivel_dificultad, 1);
+
+  const sql0002 = sqlEjecutable(leer('supabase/migrations/0002_dia2_seed_ejercicio_minimo.sql'));
+  assert.ok(sql0002.includes('00000000-0000-0000-0000-000000000001'));
+  assert.ok(sql0002.includes("'matematicas'"));
+});
+
+test('[ESTATICA] la distribucion final prevista es 5 y 5, con 2/2/1 en cada materia', () => {
+  const sql = leer(RUTA_0007);
+  const banco = [...precondicionDeclarada(sql), ...ejerciciosDeclarados(sql)];
+  assert.equal(banco.length, 10);
+
+  const cuenta = (materia, nivel) =>
+    banco.filter((e) => e.materia === materia && e.nivel_dificultad === nivel).length;
+
+  assert.equal(banco.filter((e) => e.materia === 'matematicas').length, 5);
+  assert.equal(banco.filter((e) => e.materia === 'lenguaje').length, 5);
+
+  assert.deepEqual(
+    [cuenta('matematicas', 1), cuenta('matematicas', 2), cuenta('matematicas', 3)],
+    [2, 2, 1],
+    'matematicas debe quedar 2/2/1'
+  );
+  assert.deepEqual(
+    [cuenta('lenguaje', 1), cuenta('lenguaje', 2), cuenta('lenguaje', 3)],
+    [2, 2, 1],
+    'lenguaje debe quedar 2/2/1'
+  );
+
+  // Que las DOS materias cubran los TRES niveles es justo la condicion
+  // que permite a Gemini cambiar de materia sin perder el nivel que
+  // acaba de decidir.
+  for (const materia of ['matematicas', 'lenguaje']) {
+    for (const nivel of [1, 2, 3]) {
+      assert.ok(cuenta(materia, nivel) >= 1, `falta ${materia} nivel ${nivel}`);
+    }
+  }
+});
+
+test('[ESTATICA] existe lenguaje nivel 3, que es el hueco que 0007 cierra', () => {
+  const nuevos = ejerciciosDeclarados(leer(RUTA_0007));
+  const l3 = nuevos.filter((e) => e.materia === 'lenguaje' && e.nivel_dificultad === 3);
+  assert.equal(l3.length, 1, '0007 debe aportar exactamente una actividad de lenguaje nivel 3');
+
+  // Antes de 0007 no existia ninguna: es lo que hacia imposible cumplir
+  // de forma exacta una recomendacion de "lenguaje, nivel 3".
+  const previos = precondicionDeclarada(leer(RUTA_0007)).filter(
+    (e) => e.materia === 'lenguaje' && e.nivel_dificultad === 3
+  );
+  assert.equal(previos.length, 0, 'el banco de partida no tenia lenguaje nivel 3');
+});
+
+test('[ESTATICA] 0007 verifica la distribucion resultante y aborta si no cuadra', () => {
+  const sql = sqlEjecutable(leer(RUTA_0007));
+  assert.ok(sql.includes('v_contenido is distinct from v_esperado'), 'compara el contenido completo');
+  assert.ok(sql.includes('on conflict (id) do nothing'));
+  assert.ok(sql.includes('on conflict (ejercicio_id) do nothing'));
+
+  // Precondicion, verificacion de parejas y recuento final: todas deben
+  // poder abortar la transaccion, no limitarse a registrar un aviso.
+  assert.ok((sql.match(/raise exception/g) ?? []).length >= 10, 'cada comprobacion debe poder abortar');
+
+  // El recuento final es lo que convierte el archivo en comprobable en vez
+  // de en una lista de INSERT con buena intencion.
+  assert.ok(sql.includes('count(*) into v_total from public.ejercicios'));
+  assert.ok(/v_total <> 10/.test(sql), 'debe exigir diez ejercicios');
+  assert.ok(/v_matematicas <> 5 or v_lenguaje <> 5/.test(sql), 'debe exigir 5 y 5 por materia');
+  assert.ok(/v_m1 <> 2 or v_m2 <> 2 or v_m3 <> 1/.test(sql), 'debe exigir 2/2/1 en matematicas');
+  assert.ok(/v_l1 <> 2 or v_l2 <> 2 or v_l3 <> 1/.test(sql), 'debe exigir 2/2/1 en lenguaje');
+  assert.ok(sql.includes('v_sin_respuesta'), 'ningun ejercicio puede quedar sin respuesta oficial');
+
+  // Un banco desconocido no se silencia: un ejercicio ajeno aborta.
+  assert.ok(sql.includes('v_ajenos'), 'debe detectar ejercicios ajenos al historial');
+});
+
+test('[ESTATICA] los ejercicios de 0007 caben en los CHECK de 0001', () => {
+  for (const e of ejerciciosDeclarados(leer(RUTA_0007))) {
+    assert.ok(['matematicas', 'lenguaje'].includes(e.materia));
+    assert.ok(e.nivel_dificultad >= 1 && e.nivel_dificultad <= 5);
+  }
+});
+
+test('[ESTATICA] 0007 no contiene datos personales, enlaces ni vocabulario clinico', () => {
+  // Sobre el SQL EJECUTABLE, no sobre el texto completo: la cabecera
+  // declara a proposito que el archivo NO anade contenido clinico, y
+  // buscar las raices en los comentarios convertiria esa explicacion en
+  // un falso positivo. Mismo criterio que el resto de la seccion 9.
+  const sql = sqlEjecutable(leer(RUTA_0007)).toLowerCase();
+  for (const raiz of RAICES_CLINICAS_PROHIBIDAS) {
+    assert.ok(!sql.includes(raiz.toLowerCase()), `0007 no debe mencionar la raiz clinica "${raiz}"`);
+  }
+  assert.ok(!/@[a-z0-9.-]+\.[a-z]{2,}/i.test(sql), 'sin correos');
+  assert.ok(!/https?:\/\//i.test(sql), 'sin recursos externos');
+});
+
+// ----------------------------------------------------------------
+// Comportamiento REAL del selector sobre el banco de diez.
+//
+// Estas cuatro no son estaticas: ejecutan la funcion de seleccion con el
+// banco que las migraciones describen. Son las que demuestran que la
+// ampliacion es UNICAMENTE de contenido y que la logica adaptativa no
+// cambio.
+// ----------------------------------------------------------------
+
+// El banco se construye a partir de lo que DECLARAN las migraciones, no
+// de una lista escrita a mano: si 0007 cambiara, estas pruebas cambian
+// con el. Las cinco filas previas solo aportan materia y nivel (es lo que
+// la precondicion declara), asi que se les pone un contenido de relleno:
+// el selector nunca lo mira.
+function bancoDeDiez() {
+  const sql = leer(RUTA_0007);
+  return [...precondicionDeclarada(sql), ...ejerciciosDeclarados(sql)].map((e) => ({
+    id: e.id,
+    materia: e.materia,
+    nivel_dificultad: e.nivel_dificultad,
+    contenido: e.contenido ?? {
+      tipo: 'opcion_multiple',
+      enunciado: 'Actividad del banco previo',
+      opciones: { A: 'una', B: 'otra' },
+    },
+  }));
+}
+
+const intento = (n, ejercicioId) => ({
+  id: `i${n}`,
+  ejercicio_id: ejercicioId,
+  correcto: true,
+  fecha: '2026-08-12T10:00:00Z',
+});
+
+test('el selector elige coincidencia EXACTA cuando Gemini pide lenguaje nivel 3', () => {
+  const r = seleccionarSiguienteActividad(
+    bancoDeDiez(),
+    analisisValido({ nivel_recomendado: 3, siguiente_actividad_materia: 'lenguaje' }),
+    []
+  );
+
+  assert.equal(r.estado, 'elegida');
+  assert.equal(r.ejercicio.materia, 'lenguaje');
+  assert.equal(r.ejercicio.nivel_dificultad, 3);
+  assert.equal(r.coincide_materia, true);
+  assert.equal(r.coincide_nivel, true);
+});
+
+test('el selector encuentra coincidencia exacta en las seis casillas del banco', () => {
+  const banco = bancoDeDiez();
+  for (const materia of ['matematicas', 'lenguaje']) {
+    for (const nivel of [1, 2, 3]) {
+      const r = seleccionarSiguienteActividad(
+        banco,
+        analisisValido({ nivel_recomendado: nivel, siguiente_actividad_materia: materia }),
+        []
+      );
+      assert.equal(r.estado, 'elegida');
+      assert.equal(r.coincide_materia, true, `${materia} nivel ${nivel}: materia inexacta`);
+      assert.equal(r.coincide_nivel, true, `${materia} nivel ${nivel}: nivel inexacto`);
+    }
+  }
+});
+
+test('el banco de diez NO impone un orden fijo de materias', () => {
+  const banco = bancoDeDiez();
+
+  // Primera actividad pedida en lenguaje: se sirve lenguaje, sin obligar
+  // a agotar antes las de matematicas.
+  const primera = seleccionarSiguienteActividad(
+    banco,
+    analisisValido({ nivel_recomendado: 1, siguiente_actividad_materia: 'lenguaje' }),
+    []
+  );
+  assert.equal(primera.ejercicio.materia, 'lenguaje');
+
+  // Y se puede volver a matematicas inmediatamente despues.
+  const vuelta = seleccionarSiguienteActividad(
+    banco,
+    analisisValido({ nivel_recomendado: 2, siguiente_actividad_materia: 'matematicas' }),
+    [intento(1, primera.ejercicio.id)]
+  );
+  assert.equal(vuelta.ejercicio.materia, 'matematicas');
+
+  // El selector no conoce ninguna materia por su nombre: la que manda es
+  // siempre la que decidio Gemini.
+  const fuente = leer('src/lib/adaptativo/siguiente.ts');
+  assert.ok(!/'matematicas'/.test(fuente), 'siguiente.ts no debe nombrar una materia concreta');
+  assert.ok(!/'lenguaje'/.test(fuente), 'siguiente.ts no debe nombrar una materia concreta');
+});
+
+test('el selector conserva su comportamiento adaptativo con el banco de diez', () => {
+  const banco = bancoDeDiez();
+
+  // 1. El nivel sigue mandando sobre la materia: si Gemini pide una
+  //    materia en un nivel que no existe, se respeta el nivel y se
+  //    declara que la coincidencia no fue exacta.
+  const sinCoincidencia = seleccionarSiguienteActividad(
+    banco,
+    analisisValido({ nivel_recomendado: 5, siguiente_actividad_materia: 'lenguaje' }),
+    []
+  );
+  assert.equal(sinCoincidencia.estado, 'elegida');
+  assert.equal(sinCoincidencia.ejercicio.nivel_dificultad, 3, 'sirve el nivel mas cercano');
+  assert.equal(sinCoincidencia.coincide_nivel, false, 'y lo declara como inexacto');
+
+  // 2. Lo ya respondido no se repite. Con dos actividades por casilla en
+  //    los niveles 1 y 2, MANTENER el nivel ya no obliga a repetir
+  //    ejercicio -- que es justo lo que ocurre cuando Gemini decide que
+  //    conviene consolidar antes de avanzar.
+  const primera = seleccionarSiguienteActividad(
+    banco,
+    analisisValido({ nivel_recomendado: 2, siguiente_actividad_materia: 'matematicas' }),
+    []
+  );
+  const segunda = seleccionarSiguienteActividad(
+    banco,
+    analisisValido({ nivel_recomendado: 2, siguiente_actividad_materia: 'matematicas' }),
+    [intento(1, primera.ejercicio.id)]
+  );
+  assert.notEqual(segunda.ejercicio.id, primera.ejercicio.id, 'no repite la actividad respondida');
+  assert.equal(segunda.coincide_materia, true, 'y sigue siendo una coincidencia exacta');
+  assert.equal(segunda.coincide_nivel, true);
+
+  // 3. Agotado el banco se declara, en vez de inventar una actividad.
+  const todos = banco.map((e, i) => intento(i, e.id));
+  assert.equal(seleccionarSiguienteActividad(banco, analisisValido(), todos).estado, 'sin_pendientes');
+});
